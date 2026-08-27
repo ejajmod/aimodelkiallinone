@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "workflows": [
+    {
+      "id": "my-workflow",
+      "title": "My Workflow",
+      "description": "Modele i węzły wymagane przez prywatny workflow.",
+      "estimated_size_gb": 12.4,
+      "category": "Image",
+      "accent": "violet",
+      "required_env": ["HF_TOKEN"],
+      "downloads": [
+        {
+          "name": "Pinned checkpoint",
+          "url": "https://huggingface.co/OWNER/REPO/resolve/COMMIT/model.safetensors",
+          "destination": "models/checkpoints/model.safetensors",
+          "size_bytes": 123456789,
+          "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "headers": {
+            "Authorization": "Bearer ${HF_TOKEN}"
+          }
+        }
+      ],
+      "custom_nodes": [
+        {
+          "name": "Pinned custom node",
+          "repository": "https://github.com/OWNER/REPOSITORY.git",
+          "revision": "FULL_COMMIT_SHA",
+          "directory": "custom_nodes/REPOSITORY",
+          "install_requirements": true,
+          "upgrade_requirements": false,
+          "install_script": "install.py"
+        }
+      ]
+    }
+  ]
+}

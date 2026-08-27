@@ -1,0 +1,33 @@
+services:
+  aimodelki-allin1:
+    build:
+      context: .
+    image: aimodelki-allin1:1.0
+    container_name: aimodelki-allin1
+    ports:
+      - "3000:3000"
+      - "8188:8188"
+      - "8888:8888"
+    environment:
+      RUNPOD_LAUNCHER_TOKEN: "${RUNPOD_LAUNCHER_TOKEN:-}"
+      LAUNCHER_CATALOG_PATH: "${LAUNCHER_CATALOG_PATH:-/opt/workflow-launcher/catalog/catalog.json}"
+      LAUNCHER_CATALOG_URL: "${LAUNCHER_CATALOG_URL:-}"
+      LAUNCHER_UPDATE_ENABLED: "${LAUNCHER_UPDATE_ENABLED:-0}"
+      LAUNCHER_UPDATE_REPO: "${LAUNCHER_UPDATE_REPO:-}"
+      LAUNCHER_UPDATE_REF: "${LAUNCHER_UPDATE_REF:-main}"
+      COMFYUI_ROOT: "${COMFYUI_ROOT:-/workspace/runpod-slim/ComfyUI}"
+      LAUNCHER_STATE_DIR: "${LAUNCHER_STATE_DIR:-/workspace/.aimodelki-allinone}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+    restart: unless-stopped
+    volumes:
+      - aimodelki-workspace:/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  aimodelki-workspace:

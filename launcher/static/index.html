@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="pl" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0611" />
+    <title>AIMODELKI ALL IN ONE — ComfyUI launcher</title>
+    <meta name="description" content="AIMODELKI ALL IN ONE — instalator modeli i custom nodes dla ComfyUI na RunPod." />
+    <link rel="stylesheet" href="/assets/styles.css?v=theme-toggle-20260827" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="AIMODELKI ALL IN ONE — strona główna">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><b>AIMODELKI</b> ALL IN ONE</span>
+      </a>
+      <div class="top-actions">
+        <button id="themeToggle" class="theme-toggle" type="button" role="switch" aria-checked="true" aria-label="Włącz tryb jasny">
+          <span class="theme-track" aria-hidden="true"><i></i></span>
+          <span class="theme-label">Tryb ciemny</span>
+        </button>
+        <span class="system-state"><i></i> GPU workspace</span>
+        <a id="jupyterLink" class="ghost-link" href="#" target="_blank" rel="noreferrer">JupyterLab</a>
+        <a id="comfyTopLink" class="primary-link" href="#" target="_blank" rel="noreferrer">Otwórz ComfyUI <span>↗</span></a>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="intro">
+        <div>
+          <p class="eyebrow"><span>01</span> Biblioteka instalatorów</p>
+          <h1>Wybierz swój<br /><em>zestaw roboczy.</em></h1>
+        </div>
+        <p class="intro-copy">
+          Jeden klik przygotuje modele i rozszerzenia w Twoim środowisku ComfyUI.
+          Instalacja może być wznowiona po przerwaniu.
+        </p>
+      </section>
+
+      <section class="catalog-section" aria-labelledby="catalogTitle">
+        <div class="section-heading">
+          <div>
+            <span class="micro-label">DOSTĘPNE PAKIETY</span>
+            <h2 id="catalogTitle">Katalog modeli</h2>
+          </div>
+          <div class="catalog-count"><strong id="workflowCount">0</strong><span>pakiety</span></div>
+        </div>
+
+        <div id="notice" class="notice" hidden></div>
+        <div id="workflowGrid" class="workflow-grid" aria-live="polite">
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+        </div>
+      </section>
+
+      <section id="jobPanel" class="job-panel" hidden aria-live="polite">
+        <div class="job-glow"></div>
+        <div class="job-head">
+          <div>
+            <p id="jobStatus" class="job-status"><i></i> INSTALOWANIE</p>
+            <h2 id="jobTitle">Pakiet</h2>
+          </div>
+          <strong id="jobPercent" class="job-percent">0%</strong>
+        </div>
+        <div class="progress-track"><i id="progressBar"></i></div>
+        <div class="job-meta">
+          <div>
+            <span id="jobMessage">Przygotowuję instalację…</span>
+            <small id="jobStats"></small>
+          </div>
+          <span id="jobFiles" class="file-counter"></span>
+        </div>
+        <div class="job-actions">
+          <button id="cancelButton" class="cancel-button" type="button">Zatrzymaj</button>
+          <a id="comfyButton" class="comfy-button" href="#" target="_blank" rel="noreferrer" hidden>Przejdź do ComfyUI <span>↗</span></a>
+        </div>
+      </section>
+
+      <footer>
+        <span>CUDA 13.0</span><i></i><span>ComfyUI :8188</span><i></i><span>JupyterLab :8888</span>
+      </footer>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/assets/app.js?v=theme-toggle-20260827" defer></script>
+  </body>
+</html>

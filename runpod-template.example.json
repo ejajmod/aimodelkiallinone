@@ -1,0 +1,21 @@
+{
+  "name": "AIMODELKI ALL IN ONE",
+  "imageName": "aimodelki/aimodelki-allin1:1.0.1",
+  "category": "NVIDIA",
+  "containerDiskInGb": 150,
+  "volumeInGb": 0,
+  "volumeMountPath": "/workspace",
+  "ports": [
+    "3000/http",
+    "8188/http",
+    "8888/http"
+  ],
+  "dockerEntrypoint": [],
+  "dockerStartCmd": [],
+  "env": {
+    "LAUNCHER_UPDATE_ENABLED": "0"
+  },
+  "isPublic": false,
+  "isServerless": false,
+  "readme": "# AIMODELKI ALL IN ONE\n\nOpen port 3000 for the installer, 8188 for ComfyUI and 8888 for JupyterLab. The image stores models and custom nodes under /workspace. No external workflow JSON files are bundled."
+}
