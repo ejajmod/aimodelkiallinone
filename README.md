@@ -88,6 +88,32 @@ A ready Pod returns `"ok": true`. If installation runs out of space, increase th
 
 Container storage is deleted with the Pod. Use a persistent volume mounted at `/workspace` if downloaded models must be retained.
 
+## RunPod Hub Modes
+
+The Hub image supports two explicit runtime modes:
+
+```text
+MODE_TO_RUN=pod
+```
+
+starts the interactive launcher, ComfyUI, and JupyterLab. This is the default and recommended mode.
+
+```text
+MODE_TO_RUN=serverless
+```
+
+starts a lightweight RunPod worker with two metadata actions:
+
+```json
+{"input":{"action":"health"}}
+```
+
+```json
+{"input":{"action":"catalog"}}
+```
+
+Model installation and the browser interfaces are available only in Pod mode.
+
 ## Authors
 
 **AIMODELKI Team**  
@@ -95,6 +121,8 @@ Container storage is deleted with the Pod. Use a persistent volume mounted at `/
 
 ## Version History
 
+- **1.1.0**
+  - Added RunPod Hub metadata, automated tests, and Pod/Serverless dual-mode startup.
 - **1.0.1**
   - JupyterLab now opens without password or token authentication.
 - **1.0.0**

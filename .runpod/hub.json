@@ -1,0 +1,57 @@
+{
+  "title": "AIMODELKI ALL IN ONE",
+  "description": "One-click ComfyUI environment with guided model and custom-node installers, JupyterLab, and a RunPod-compatible metadata API.",
+  "type": "serverless",
+  "category": "image",
+  "config": {
+    "runsOn": "GPU",
+    "endpointType": "LB",
+    "containerDiskInGb": 150,
+    "gpuCount": 1,
+    "allowedCudaVersions": [
+      "13.0"
+    ],
+    "presets": [
+      {
+        "name": "Interactive Pod",
+        "defaults": {
+          "MODE_TO_RUN": "pod",
+          "LAUNCHER_UPDATE_ENABLED": "0"
+        }
+      },
+      {
+        "name": "Serverless Metadata API",
+        "defaults": {
+          "MODE_TO_RUN": "serverless",
+          "LAUNCHER_UPDATE_ENABLED": "0"
+        }
+      }
+    ],
+    "env": [
+      {
+        "key": "MODE_TO_RUN",
+        "input": {
+          "name": "Runtime mode",
+          "type": "string",
+          "description": "Use pod for the interactive launcher or serverless for the metadata API.",
+          "options": [
+            {
+              "label": "Interactive Pod",
+              "value": "pod"
+            },
+            {
+              "label": "Serverless Metadata API",
+              "value": "serverless"
+            }
+          ],
+          "default": "pod",
+          "advanced": false
+        }
+      },
+      {
+        "key": "LAUNCHER_UPDATE_ENABLED",
+        "value": "0"
+      }
+    ]
+  }
+}
