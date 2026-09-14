@@ -111,13 +111,16 @@ h1 { margin: 0; font-size: clamp(48px, 6.3vw, 82px); line-height: .96; letter-sp
 h1 em { color: transparent; background: linear-gradient(90deg, #ec4899, #8b5cf6); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-style: normal; filter: drop-shadow(0 8px 24px rgba(139, 92, 246, .1)); }
 .intro-copy { max-width: 420px; margin: 0 0 4px; color: var(--muted); font-size: 14px; line-height: 1.8; }
 
-.catalog-section { border: 1px solid var(--line); border-radius: 24px; padding: 26px; background: var(--panel); box-shadow: 0 24px 70px rgba(61, 45, 74, .08); }
+.catalog-section { margin-top: 16px; border: 1px solid var(--line); border-radius: 24px; padding: 26px; background: var(--panel); box-shadow: 0 24px 70px rgba(61, 45, 74, .08); }
 .section-heading { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 22px; padding: 2px 4px 22px; border-bottom: 1px solid var(--line); }
 .micro-label { display: block; color: var(--violet); margin-bottom: 10px; }
 .section-heading h2 { margin: 0; font-size: 22px; letter-spacing: -.03em; }
 .catalog-count { text-align: right; display: flex; gap: 8px; align-items: baseline; }
 .catalog-count strong { font-size: 25px; }
 .catalog-count span { font: 400 10px "SFMono-Regular", Consolas, monospace; color: var(--muted); text-transform: uppercase; }
+.catalog-summary { display: flex; align-items: center; gap: 16px; }
+.download-mode { padding: 8px 11px; border: 1px solid var(--line); border-radius: 999px; font: 700 10px "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--surface); }
+.download-mode.instant { color: var(--pink); border-color: rgba(217, 70, 239, .45); background: rgba(217, 70, 239, .09); }
 
 .workflow-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .workflow-card {
@@ -150,13 +153,45 @@ h1 em { color: transparent; background: linear-gradient(90deg, #ec4899, #8b5cf6)
 .package-state { padding: 6px 8px; border: 1px solid color-mix(in srgb, var(--accent), transparent 55%); border-radius: 99px; color: var(--accent); font: 500 9px "SFMono-Regular", Consolas, monospace; letter-spacing: .1em; }
 .workflow-card h3 { font-size: 22px; margin: 28px 0 9px; letter-spacing: -.035em; }
 .workflow-card p { color: var(--muted); margin: 0; line-height: 1.55; font-size: 13px; max-width: 88%; }
+.manual-note { display: block; width: fit-content; max-width: 100%; margin-top: 14px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--rose), transparent 62%); border-radius: 9px; color: var(--rose); background: color-mix(in srgb, var(--rose), transparent 92%); font-size: 11px; font-weight: 700; line-height: 1.4; }
 .card-bottom { margin-top: auto; display: flex; align-items: end; justify-content: space-between; padding-top: 22px; }
 .card-bottom span { font: 500 11px "SFMono-Regular", Consolas, monospace; color: #514b56; }
-.card-arrow { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--accent), transparent 86%); color: var(--accent); font-size: 16px; }
+.card-arrow { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 13px; border: 1px solid color-mix(in srgb, var(--accent), transparent 55%); border-radius: 10px; background: color-mix(in srgb, var(--accent), transparent 88%); color: var(--accent); font: 700 10px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
 
 .notice { padding: 14px 16px; margin-bottom: 16px; border: 1px solid rgba(236,72,153,.25); border-radius: 12px; background: #fdf2f8; color: #9d174d; font-size: 12px; line-height: 1.5; }
 .skeleton-card { min-height: 230px; border-radius: 17px; background: linear-gradient(100deg, #f8f2fc 20%, #eee6f4 35%, #f8f2fc 50%); background-size: 300% 100%; animation: shimmer 1.5s infinite; }
 @keyframes shimmer { to { background-position-x: -300%; } }
+
+.instant-section { border: 1px solid var(--line); border-radius: 24px; padding: 26px; background: var(--panel); box-shadow: 0 24px 70px rgba(61,45,74,.08); }
+.instant-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.instant-heading h2 { margin: 0; font-size: 24px; letter-spacing: -.035em; }
+.instant-heading p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+.instant-badge { padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 99px; color: var(--muted); font: 600 9px "SFMono-Regular", Consolas, monospace; letter-spacing: .1em; }
+.instant-badge.active { color: var(--green); border-color: color-mix(in srgb, var(--green), transparent 55%); }
+.instant-inactive, .instant-active { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--line); }
+.instant-inactive label, .instant-controls label { display: block; margin-bottom: 8px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.instant-token-row { display: flex; gap: 10px; }
+.instant-token-row input, .instant-controls select { min-height: 42px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); color: var(--text); padding: 0 13px; outline: none; }
+.instant-token-row input { flex: 1; min-width: 0; font-family: "SFMono-Regular", Consolas, monospace; }
+.instant-token-row input:focus, .instant-controls select:focus { border-color: var(--violet); box-shadow: 0 0 0 3px color-mix(in srgb, var(--violet), transparent 84%); }
+.instant-purchase { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 42px; padding: 0 15px; border: 1px solid color-mix(in srgb, var(--rose), transparent 40%); border-radius: 10px; color: var(--rose); background: color-mix(in srgb, var(--rose), transparent 93%); font-size: 11px; font-weight: 700; white-space: nowrap; transition: border-color .2s ease, background .2s ease; }
+.instant-purchase:hover, .instant-purchase:focus-visible { border-color: var(--rose); background: color-mix(in srgb, var(--rose), transparent 85%); }
+.instant-inactive small { display: block; margin-top: 9px; color: var(--muted); font-size: 10px; }
+.instant-connection { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.instant-connection div { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--panel-strong), transparent 10%); }
+.instant-connection span { display: block; color: var(--muted); font-size: 10px; margin-bottom: 6px; }
+.instant-connection strong { font: 600 12px "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
+.instant-controls { display: grid; grid-template-columns: minmax(200px, 1fr) auto auto; align-items: end; gap: 10px; margin-top: 14px; }
+.instant-controls label { grid-column: 1; margin-bottom: -3px; }
+.instant-controls select { grid-column: 1; width: 100%; }
+.instant-controls .comfy-button { grid-column: 2; grid-row: 2; }
+.instant-controls .cancel-button { grid-column: 3; grid-row: 2; }
+.instant-progress { margin-top: 18px; padding: 22px; border: 1px solid rgba(139,92,246,.3); border-radius: 16px; background: color-mix(in srgb, var(--panel-strong), transparent 4%); }
+.instant-progress h3 { margin: 0; font-size: 20px; }
+.instant-progress.complete { border-color: rgba(100,226,183,.5); }
+.instant-progress.complete .job-status { color: var(--green); }
+.instant-progress.failed { border-color: rgba(255,118,154,.42); }
+.instant-progress.failed .job-status { color: var(--rose); }
 
 .job-panel { margin-top: 16px; border: 1px solid rgba(139,92,246,.38); border-radius: 24px; background: #fff; padding: 30px; position: relative; overflow: hidden; box-shadow: 0 20px 55px rgba(61, 45, 74, .1); }
 .job-glow { position: absolute; width: 320px; height: 120px; right: -80px; top: -100px; border-radius: 50%; background: var(--violet); filter: blur(70px); opacity: .15; }
@@ -169,6 +204,12 @@ h1 em { color: transparent; background: linear-gradient(90deg, #ec4899, #8b5cf6)
 .progress-track i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #ec4899, #8b5cf6); transition: width .4s ease; box-shadow: 0 0 18px rgba(139,92,246,.3); }
 .job-meta { color: #514b56; display: flex; justify-content: space-between; gap: 30px; font-size: 12px; line-height: 1.5; }
 .job-meta small { display: block; color: var(--muted); margin-top: 4px; font: 400 10px "SFMono-Regular", Consolas, monospace; }
+.manual-guide { margin-top: 20px; padding: 16px; border: 1px solid color-mix(in srgb, var(--rose), transparent 54%); border-radius: 12px; background: color-mix(in srgb, var(--rose), transparent 94%); color: var(--text); font-size: 12px; line-height: 1.6; }
+.manual-guide strong { display: block; margin-bottom: 4px; color: var(--rose); font-size: 12px; }
+.manual-guide p { margin: 0 0 8px; }
+.manual-guide code { display: block; overflow-wrap: anywhere; padding: 8px 10px; border-radius: 7px; background: var(--panel-strong); color: var(--text); font-size: 11px; }
+.manual-guide a { display: inline-block; margin-top: 10px; color: var(--violet); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.manual-guide small { display: block; margin-top: 8px; color: var(--muted); }
 .file-counter { color: var(--muted); font: 400 10px "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
 .job-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .cancel-button, .comfy-button { border-radius: 10px; padding: 11px 16px; font-size: 11px; font-weight: 700; border: 1px solid var(--line); cursor: pointer; }
@@ -179,6 +220,8 @@ h1 em { color: transparent; background: linear-gradient(90deg, #ec4899, #8b5cf6)
 .job-panel.complete { border-color: rgba(100,226,183,.5); }
 .job-panel.complete .job-status { color: var(--green); }
 .job-panel.complete .progress-track i { background: var(--green); box-shadow: 0 0 16px rgba(100,226,183,.5); }
+.job-panel.partial { border-color: color-mix(in srgb, var(--rose), transparent 45%); }
+.job-panel.partial .job-status { color: var(--rose); }
 .job-panel.failed { border-color: rgba(255,118,154,.42); }
 .job-panel.failed .job-status { color: var(--rose); }
 
@@ -210,6 +253,10 @@ html[data-theme="dark"] .workflow-card:hover:not(:disabled) { box-shadow: 0 16px
 html[data-theme="dark"] .card-bottom span { color: #e5d6ea; }
 html[data-theme="dark"] .notice { border-color: rgba(244, 114, 182, .28); background: rgba(190, 24, 93, .1); color: #f9c4df; }
 html[data-theme="dark"] .skeleton-card { background: linear-gradient(100deg, #1a0c22 20%, #32143f 35%, #1a0c22 50%); background-size: 300% 100%; }
+html[data-theme="dark"] .instant-section { background: linear-gradient(145deg, rgba(30,12,37,.92), rgba(15,7,22,.9)); box-shadow: 0 30px 80px rgba(25,4,31,.38); }
+html[data-theme="dark"] .instant-token-row input, html[data-theme="dark"] .instant-controls select { background: rgba(255,255,255,.035); }
+html[data-theme="dark"] .manual-guide { background: rgba(190, 24, 93, .09); }
+html[data-theme="dark"] .manual-guide code { background: rgba(255,255,255,.045); }
 html[data-theme="dark"] .job-panel { background: linear-gradient(145deg, rgba(35, 13, 45, .96), rgba(19, 8, 27, .95)); box-shadow: 0 20px 55px rgba(51, 8, 63, .28); }
 html[data-theme="dark"] .progress-track { background: rgba(255, 255, 255, .08); }
 html[data-theme="dark"] .job-meta { color: #e1d2e6; }
@@ -231,6 +278,14 @@ html[data-theme="dark"] .toast { background: #2b1028; color: #ffd9ed; box-shadow
   .catalog-section { padding: 16px; border-radius: 18px; }
   .workflow-grid { grid-template-columns: 1fr; }
   .workflow-card { min-height: 215px; }
+  .instant-section { padding: 20px 16px; border-radius: 18px; }
+  .instant-heading, .instant-token-row { flex-direction: column; }
+  .instant-token-row .comfy-button, .instant-purchase { width: 100%; }
+  .instant-connection { grid-template-columns: 1fr; }
+  .instant-controls { grid-template-columns: 1fr 1fr; }
+  .instant-controls label, .instant-controls select { grid-column: 1 / -1; }
+  .instant-controls .comfy-button { grid-column: 1; grid-row: 3; }
+  .instant-controls .cancel-button { grid-column: 2; grid-row: 3; }
   .job-panel { padding: 22px 18px; border-radius: 18px; }
   .job-percent { font-size: 34px; }
   .job-meta { flex-direction: column; gap: 8px; }

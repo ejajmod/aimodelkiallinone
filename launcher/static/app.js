@@ -1,4 +1,4 @@
-const ACTIVE_STATES = new Set(["queued", "downloading", "installing", "restarting"]);
+const ACTIVE_STATES = new Set(["queued", "scanning", "downloading", "verifying", "installing", "restarting"]);
 const TERMINAL_STATES = new Set(["complete", "failed", "cancelled", "interrupted"]);
 
 const grid = document.querySelector("#workflowGrid");
@@ -13,11 +13,22 @@ const message = document.querySelector("#jobMessage");
 const stats = document.querySelector("#jobStats");
 const files = document.querySelector("#jobFiles");
 const cancelButton = document.querySelector("#cancelButton");
+const resumeButton = document.querySelector("#resumeButton");
 const comfyButton = document.querySelector("#comfyButton");
+const manualGuide = document.querySelector("#manualGuide");
 const toast = document.querySelector("#toast");
 const themeToggle = document.querySelector("#themeToggle");
 const themeLabel = themeToggle.querySelector(".theme-label");
 const themeColor = document.querySelector('meta[name="theme-color"]');
+const instantInactive = document.querySelector("#instantInactive");
+const instantActive = document.querySelector("#instantActive");
+const instantBadge = document.querySelector("#instantBadge");
+const instantToken = document.querySelector("#instantToken");
+const instantActivate = document.querySelector("#instantActivate");
+const instantMasked = document.querySelector("#instantMasked");
+const instantValidUntil = document.querySelector("#instantValidUntil");
+const instantDisconnect = document.querySelector("#instantDisconnect");
+const downloadMode = document.querySelector("#downloadMode");
 
 const THEME_STORAGE_KEY = "aimodelki-allinone-theme";
 
@@ -47,6 +58,7 @@ let workflows = [];
 let currentJob = { status: "idle" };
 let pollTimer = null;
 let serviceUrls = { comfyui: "#", jupyter: "#" };
+let instantState = { status: "idle", connected: false };
 
 const query = new URLSearchParams(location.search);
 if (query.has("token")) {
@@ -89,6 +101,10 @@ function showToast(text) {
 }
 
 function cardState(workflow) {
+  if (workflow.installed && workflow.manual_files?.length) {
+    if (workflow.manual_files.every((file) => file.detected)) return "MODEL WYKRYTY";
+    return instantState.connected ? "ZAINSTALUJ" : "DODAJ MODEL";
+  }
   if (workflow.installed) return "GOTOWY";
   if (!workflow.configured) return "KONFIGURACJA";
   return "ZAINSTALUJ";
@@ -110,9 +126,14 @@ function renderCards() {
         </span>
         <h3>${escapeHtml(workflow.title)}</h3>
         <p>${escapeHtml(workflow.description)}</p>
+        ${workflow.manual_files?.length ? `<span class="manual-note">${workflow.manual_files.every((file) => file.detected)
+          ? "Główny model wykryty po rozmiarze"
+          : instantState.connected
+            ? "Główny model pobierze Instant Models"
+            : "Główny model dodajesz ręcznie"}</span>` : ""}
         <span class="card-bottom">
-          <span>≈ ${workflow.estimated_size_gb.toFixed(1)} GB</span>
-          <span class="card-arrow">↘</span>
+          <span>≈ ${workflow.estimated_size_gb.toFixed(1)} GB${workflow.manual_files?.length ? " do pobrania" : ""}</span>
+          <span class="card-arrow">Pobierz ↘</span>
         </span>
       </button>`;
   }).join("");
@@ -132,16 +153,29 @@ function statusText(status) {
 
 function renderJob(job) {
   currentJob = job || { status: "idle" };
+  const busy = ACTIVE_STATES.has(currentJob.status);
+  instantActivate.disabled = busy;
+  instantDisconnect.disabled = busy;
   renderCards();
   if (!job || job.status === "idle") {
     panel.hidden = true;
+    manualGuide.hidden = true;
     return;
   }
 
+  const workflow = workflows.find((item) => item.id === job.workflow_id);
+  const manualFiles = job.manual_files_pending || workflow?.manual_files || [];
+  if (workflow && job.status === "complete" && Array.isArray(job.manual_files_pending) && job.manual_files_pending.length === 0) {
+    workflow.installed = true;
+    workflow.manual_files = (workflow.manual_files || []).map((file) => ({ ...file, detected: true }));
+    renderCards();
+  }
+  const missingManual = manualFiles.some((file) => !file.detected);
   panel.hidden = false;
-  panel.classList.toggle("complete", job.status === "complete");
+  panel.classList.toggle("complete", job.status === "complete" && !missingManual);
+  panel.classList.toggle("partial", job.status === "complete" && missingManual);
   panel.classList.toggle("failed", ["failed", "cancelled", "interrupted"].includes(job.status));
-  statusLabel.innerHTML = `<i></i> ${statusText(job.status)}`;
+  statusLabel.innerHTML = `<i></i> ${job.status === "complete" && missingManual ? "PLIKI POMOCNICZE GOTOWE" : statusText(job.status)}`;
   title.textContent = job.workflow_title || "Instalacja";
   const progress = Math.max(0, Math.min(100, Number(job.progress || 0)));
   percent.textContent = `${progress}%`;
@@ -150,14 +184,30 @@ function renderJob(job) {
   files.textContent = job.total_items ? `Element ${job.current_index || 0} z ${job.total_items}` : "";
 
   const fragments = [];
+  if (job.download_mode === "instant") fragments.push("Instant Download");
+  if (job.download_mode === "standard") fragments.push("Standard Download");
   if (job.downloaded_bytes && job.total_bytes) fragments.push(`${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`);
   if (job.speed_bytes_per_second) fragments.push(`${formatBytes(job.speed_bytes_per_second)}/s`);
   if (job.current_item) fragments.push(job.current_item);
   stats.textContent = fragments.join("  ·  ");
 
+  manualGuide.hidden = manualFiles.length === 0;
+  if (manualFiles.length) {
+    manualGuide.innerHTML = manualFiles.map((file) => `
+      <strong>${file.detected ? "Model ręczny wykryty" : "Wymagany model ręczny: " + escapeHtml(file.name)}</strong>
+      <p>${file.detected
+        ? "Plik ma oczekiwany rozmiar, ale jego SHA256 nie zostało tu zweryfikowane."
+        : "Ten plik nie jest pobierany przez instalator. Wgraj go przez JupyterLab do katalogu:"}</p>
+      <code>${escapeHtml(file.full_path)}</code>
+      <a href="${escapeHtml(file.source_url)}" target="_blank" rel="noopener noreferrer">Otwórz stronę modelu ↗</a>
+      <small>Po wgraniu uruchom ComfyUI ponownie i odśwież tę stronę.</small>
+    `).join("");
+  }
+
   cancelButton.hidden = !ACTIVE_STATES.has(job.status);
   cancelButton.disabled = job.message?.startsWith("Zatrzymywanie");
-  comfyButton.hidden = job.status !== "complete";
+  resumeButton.hidden = !["cancelled", "interrupted"].includes(job.status) || !job.workflow_id;
+  comfyButton.hidden = job.status !== "complete" || missingManual;
   if (TERMINAL_STATES.has(job.status)) stopPolling();
 }
 
@@ -187,11 +237,52 @@ function stopPolling() {
   pollTimer = null;
 }
 
+function renderInstant(state) {
+  instantState = state || { status: "idle", connected: false };
+  const connected = Boolean(instantState.connected);
+  instantInactive.hidden = connected;
+  instantActive.hidden = !connected;
+  instantBadge.textContent = connected ? "ACTIVE" : "INACTIVE";
+  instantBadge.classList.toggle("active", connected);
+  instantMasked.textContent = instantState.token_masked || "—";
+  instantValidUntil.textContent = instantState.valid_until
+    ? new Date(instantState.valid_until).toLocaleString("pl-PL")
+    : "—";
+
+  instantDisconnect.disabled = ACTIVE_STATES.has(currentJob.status);
+  instantActivate.disabled = ACTIVE_STATES.has(currentJob.status);
+  downloadMode.textContent = connected ? "Instant Download" : "Standard Download";
+  downloadMode.classList.toggle("instant", connected);
+  renderCards();
+}
+
+instantActivate.addEventListener("click", async () => {
+  const token = instantToken.value.trim();
+  if (!token) return showToast("Wklej token Instant Models.");
+  instantActivate.disabled = true;
+  try {
+    renderInstant(await api("/api/instant-models/activate", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }),
+    }));
+    instantToken.value = "";
+  } catch (error) { showToast(error.message); }
+  finally { instantActivate.disabled = false; }
+});
+
+instantDisconnect.addEventListener("click", async () => {
+  try { renderInstant(await api("/api/instant-models/connection", { method: "DELETE" })); }
+  catch (error) { showToast(error.message); }
+});
+
 cancelButton.addEventListener("click", async () => {
   try {
     const response = await api("/api/jobs/current/cancel", { method: "POST" });
     renderJob(response.job);
   } catch (error) { showToast(error.message); }
+});
+
+resumeButton.addEventListener("click", () => {
+  if (currentJob.workflow_id) beginInstall(currentJob.workflow_id);
 });
 
 async function boot() {
@@ -203,6 +294,7 @@ async function boot() {
     document.querySelector("#jupyterLink").href = serviceUrls.jupyter;
     document.querySelector("#comfyTopLink").href = serviceUrls.comfyui;
     comfyButton.href = serviceUrls.comfyui;
+    renderInstant(data.instant_models);
     if (data.catalog_error) {
       notice.hidden = false;
       notice.textContent = `Błąd katalogu: ${data.catalog_error}`;

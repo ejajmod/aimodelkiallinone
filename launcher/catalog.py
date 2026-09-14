@@ -42,6 +42,15 @@ class NodeSpec:
 
 
 @dataclass(frozen=True)
+class ManualFileSpec:
+    name: str
+    destination: str
+    size_bytes: int
+    sha256: str
+    source_url: str
+
+
+@dataclass(frozen=True)
 class WorkflowSpec:
     id: str
     title: str
@@ -52,6 +61,7 @@ class WorkflowSpec:
     downloads: tuple[DownloadSpec, ...]
     custom_nodes: tuple[NodeSpec, ...]
     required_env: tuple[str, ...]
+    manual_files: tuple[ManualFileSpec, ...] = ()
 
     @property
     def missing_env(self) -> list[str]:
@@ -170,6 +180,28 @@ def parse_catalog(raw: dict[str, Any]) -> list[WorkflowSpec]:
                 )
             )
 
+        manual_files: list[ManualFileSpec] = []
+        for index, manual in enumerate(item.get("manual_files", [])):
+            label = f"workflows[{workflow_id}].manual_files[{index}]"
+            checksum = str(manual.get("sha256", "")).lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", checksum):
+                raise CatalogError(f"{label}.sha256 must contain 64 hex characters")
+            try:
+                size_bytes = int(manual.get("size_bytes", 0))
+            except (TypeError, ValueError) as exc:
+                raise CatalogError(f"{label}.size_bytes must be positive") from exc
+            if size_bytes <= 0:
+                raise CatalogError(f"{label}.size_bytes must be positive")
+            manual_files.append(
+                ManualFileSpec(
+                    name=str(manual.get("name") or "Manual model"),
+                    destination=_safe_relative_path(str(manual.get("destination", "")), f"{label}.destination"),
+                    size_bytes=size_bytes,
+                    sha256=checksum,
+                    source_url=_require_https_or_localhost(str(manual.get("source_url", "")), f"{label}.source_url"),
+                )
+            )
+
         workflows.append(
             WorkflowSpec(
                 id=workflow_id,
@@ -181,6 +213,7 @@ def parse_catalog(raw: dict[str, Any]) -> list[WorkflowSpec]:
                 downloads=tuple(downloads),
                 custom_nodes=tuple(nodes),
                 required_env=required_env,
+                manual_files=tuple(manual_files),
             )
         )
     return workflows

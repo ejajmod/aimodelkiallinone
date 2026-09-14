@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-import hashlib
 import os
-import shutil
 import signal
 import subprocess
+import sys
 import tarfile
 import threading
-import time
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-import requests
-
 from .catalog import DownloadSpec, NodeSpec, WorkflowSpec
+from .download_engine import DownloadCancelled, DownloadEngine, DownloadError, DownloadRequest
+from .instant_models import InstantDownloadSource
+from .operations import OperationBusy, OperationCoordinator
 from .state import StateStore
 
 
@@ -26,16 +26,48 @@ class InstallError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class ResolvedDownload:
+    spec: DownloadSpec
+    url_provider: Callable[[], str]
+    instant: bool = False
+
+
 class Installer:
     ACTIVE_STATES = {"queued", "downloading", "installing", "restarting"}
 
-    def __init__(self, comfyui_root: Path, store: StateStore, restart_script: Path):
+    def __init__(
+        self,
+        comfyui_root: Path,
+        store: StateStore,
+        restart_script: Path,
+        coordinator: OperationCoordinator | None = None,
+    ):
         self.comfyui_root = comfyui_root.resolve()
         self.store = store
         self.restart_script = restart_script
         self._thread: threading.Thread | None = None
         self._cancel = threading.Event()
         self._guard = threading.Lock()
+        self.coordinator = coordinator or OperationCoordinator()
+        self.download_engine = DownloadEngine(self.comfyui_root)
+        connections = self._env_int("INSTANT_MODELS_DOWNLOAD_CONNECTIONS", 64, 1, 64)
+        segment_mb = self._env_int("INSTANT_MODELS_DOWNLOAD_SEGMENT_MB", 64, 8, 1024)
+        segment_size = segment_mb * 1024 * 1024
+        self.instant_download_engine = DownloadEngine(
+            self.comfyui_root,
+            parallelism=connections,
+            segment_size=segment_size,
+            parallel_threshold=segment_size * 2,
+        )
+
+    @staticmethod
+    def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+        try:
+            value = int(os.getenv(name, str(default)))
+        except ValueError:
+            value = default
+        return max(minimum, min(value, maximum))
 
     @property
     def active(self) -> bool:
@@ -50,9 +82,13 @@ class Installer:
             self.comfyui_root / ".venv-cu128" / "bin" / "python",
             self.comfyui_root / ".venv" / "bin" / "python",
         )
-        return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
+        return next((candidate for candidate in candidates if candidate.is_file()), Path(sys.executable))
 
-    def start(self, workflow: WorkflowSpec) -> None:
+    def start(
+        self,
+        workflow: WorkflowSpec,
+        instant_source: InstantDownloadSource | None = None,
+    ) -> None:
         with self._guard:
             if self.active:
                 raise InstallError("Inny instalator jest już uruchomiony")
@@ -62,23 +98,43 @@ class Installer:
             comfy_python = self._comfy_python()
             if not (self.comfyui_root / "main.py").is_file() or not comfy_python.is_file():
                 raise InstallError("ComfyUI jest jeszcze inicjalizowane. Poczekaj chwilę i spróbuj ponownie.")
+            try:
+                self.coordinator.acquire("workflow")
+            except OperationBusy as exc:
+                raise InstallError(str(exc)) from exc
             self._cancel.clear()
-            self.store.update(
-                status="queued",
-                workflow_id=workflow.id,
-                workflow_title=workflow.title,
-                progress=0,
-                current_item=None,
-                current_index=0,
-                total_items=len(workflow.downloads) + len(workflow.custom_nodes),
-                downloaded_bytes=0,
-                total_bytes=sum(item.size_bytes or 0 for item in workflow.downloads),
-                speed_bytes_per_second=0,
-                error=None,
-                message="Przygotowuję instalację…",
-            )
-            self._thread = threading.Thread(target=self._run, args=(workflow,), daemon=True)
-            self._thread.start()
+            try:
+                downloads, pending_manual = self._resolve_downloads(workflow, instant_source)
+                self.store.update(
+                    status="queued",
+                    workflow_id=workflow.id,
+                    workflow_title=workflow.title,
+                    progress=0,
+                    current_item=None,
+                    current_index=0,
+                    total_items=len(downloads) + len(workflow.custom_nodes),
+                    downloaded_bytes=0,
+                    total_bytes=sum(item.spec.size_bytes or 0 for item in downloads),
+                    speed_bytes_per_second=0,
+                    download_mode="instant" if any(item.instant for item in downloads) else "standard",
+                    download_connections=self.instant_download_engine.parallelism if any(item.instant for item in downloads) else 1,
+                    manual_files_pending=self._manual_payload(pending_manual),
+                    error=None,
+                    message=(
+                        "Przygotowuję szybkie pobieranie…"
+                        if any(item.instant for item in downloads)
+                        else "Przygotowuję instalację…"
+                    ),
+                )
+                self._thread = threading.Thread(
+                    target=self._run,
+                    args=(workflow, downloads, pending_manual),
+                    daemon=True,
+                )
+                self._thread.start()
+            except Exception:
+                self.coordinator.release("workflow")
+                raise
 
     def cancel(self) -> None:
         if not self.active:
@@ -96,15 +152,85 @@ class Installer:
             raise InstallError(f"Ścieżka wychodzi poza COMFYUI_ROOT: {relative}")
         return target
 
-    def _run(self, workflow: WorkflowSpec) -> None:
+    def _resolve_downloads(
+        self,
+        workflow: WorkflowSpec,
+        instant_source: InstantDownloadSource | None,
+    ) -> tuple[list[ResolvedDownload], list[object]]:
+        downloads: list[ResolvedDownload] = []
+        for item in workflow.downloads:
+            remote = instant_source.file_for(item.destination) if instant_source else None
+            if instant_source and not remote:
+                raise InstallError(f"Manifest Instant Models nie zawiera pliku pakietu: {item.name}")
+            if remote:
+                if remote.size != item.size_bytes or remote.sha256.lower() != (item.sha256 or "").lower():
+                    raise InstallError(f"Manifest Instant Models nie zgadza się z katalogiem: {item.name}")
+                downloads.append(
+                    ResolvedDownload(
+                        item,
+                        lambda file_id=remote.id: instant_source.client.download_url(file_id),
+                        instant=True,
+                    )
+                )
+            else:
+                downloads.append(ResolvedDownload(item, lambda url=item.url: url))
+
+        pending_manual = []
+        for manual in workflow.manual_files:
+            remote = instant_source.file_for(manual.destination) if instant_source else None
+            if not remote:
+                if instant_source:
+                    raise InstallError(f"Manifest Instant Models nie zawiera pliku pakietu: {manual.name}")
+                pending_manual.append(manual)
+                continue
+            if remote.size != manual.size_bytes or remote.sha256.lower() != manual.sha256.lower():
+                raise InstallError(f"Manifest Instant Models nie zgadza się z katalogiem: {manual.name}")
+            downloads.append(
+                ResolvedDownload(
+                    DownloadSpec(
+                        name=manual.name,
+                        url="",
+                        destination=manual.destination,
+                        size_bytes=manual.size_bytes,
+                        sha256=manual.sha256,
+                        headers={},
+                        extract=None,
+                    ),
+                    lambda file_id=remote.id: instant_source.client.download_url(file_id),
+                    instant=True,
+                )
+            )
+        return downloads, pending_manual
+
+    def _manual_payload(self, files: list[object]) -> list[dict[str, object]]:
+        return [
+            {
+                "name": file.name,
+                "destination": file.destination,
+                "full_path": str(self._target(file.destination)),
+                "size_bytes": file.size_bytes,
+                "sha256": file.sha256,
+                "source_url": file.source_url,
+                "detected": False,
+            }
+            for file in files
+        ]
+
+    def _run(
+        self,
+        workflow: WorkflowSpec,
+        downloads: list[ResolvedDownload],
+        pending_manual: list[object],
+    ) -> None:
         try:
             self.comfyui_root.mkdir(parents=True, exist_ok=True)
-            total_items = len(workflow.downloads) + len(workflow.custom_nodes)
-            total_expected = sum(item.size_bytes or 0 for item in workflow.downloads)
+            total_items = len(downloads) + len(workflow.custom_nodes)
+            total_expected = sum(item.spec.size_bytes or 0 for item in downloads)
             completed_expected = 0
 
-            for index, item in enumerate(workflow.downloads, start=1):
+            for index, resolved in enumerate(downloads, start=1):
                 self._check_cancelled()
+                item = resolved.spec
                 self.store.update(
                     status="downloading",
                     current_item=item.name,
@@ -112,10 +238,10 @@ class Installer:
                     total_items=total_items,
                     message=f"Pobieranie: {item.name}",
                 )
-                actual_size = self._download(item, completed_expected, total_expected, index, total_items)
+                actual_size = self._download(resolved, completed_expected, total_expected, index, total_items)
                 completed_expected += item.size_bytes or actual_size
 
-            node_base = len(workflow.downloads)
+            node_base = len(downloads)
             for offset, node in enumerate(workflow.custom_nodes, start=1):
                 self._check_cancelled()
                 index = node_base + offset
@@ -141,7 +267,11 @@ class Installer:
                 progress=100,
                 speed_bytes_per_second=0,
                 installed_workflows=sorted(installed),
-                message="Pakiet jest gotowy. ComfyUI zostało uruchomione ponownie.",
+                message=(
+                    "Pliki pomocnicze są gotowe. Dodaj ręcznie główny model wskazany poniżej i uruchom ComfyUI ponownie."
+                    if pending_manual
+                    else "Pakiet jest gotowy. ComfyUI zostało uruchomione ponownie."
+                ),
             )
         except InstallCancelled:
             self.store.update(
@@ -156,89 +286,60 @@ class Installer:
                 error=str(exc),
                 message="Instalacja nie powiodła się. Możesz spróbować ponownie.",
             )
+        finally:
+            self.coordinator.release("workflow")
 
     def _download(
         self,
-        item: DownloadSpec,
+        resolved: ResolvedDownload | DownloadSpec,
         completed_before: int,
         total_expected: int,
         item_index: int,
         total_items: int,
     ) -> int:
-        target = self._target(item.destination)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(resolved, DownloadSpec):
+            resolved = ResolvedDownload(resolved, lambda url=resolved.url: url)
+        item = resolved.spec
+        request = DownloadRequest(
+            name=item.name,
+            destination=item.destination,
+            size_bytes=item.size_bytes,
+            sha256=item.sha256,
+            url_provider=resolved.url_provider,
+            headers=item.headers,
+        )
 
-        if target.exists() and (not item.sha256 or self._sha256(target) == item.sha256):
-            size = target.stat().st_size
+        def publish(current: int, expected: int, speed: int) -> None:
+            aggregate_total = total_expected or expected
+            aggregate_done = completed_before + min(current, expected or current)
             self._publish_download_progress(
                 item,
-                completed_before + (item.size_bytes or size),
-                total_expected,
-                size,
-                0,
+                aggregate_done,
+                aggregate_total,
+                current,
+                speed,
                 item_index,
                 total_items,
             )
-            return size
 
-        part = target.with_name(target.name + ".part")
-        resume_at = part.stat().st_size if part.exists() else 0
-        headers = {key: value for key, value in item.headers.items() if value}
-        if resume_at:
-            headers["Range"] = f"bytes={resume_at}-"
+        try:
+            engine = self.instant_download_engine if resolved.instant else self.download_engine
+            size = engine.download(
+                request,
+                cancelled=self._cancel.is_set,
+                progress=publish,
+            )
+        except DownloadCancelled as exc:
+            raise InstallCancelled() from exc
+        except DownloadError as exc:
+            raise InstallError(str(exc)) from exc
 
-        with requests.get(item.url, headers=headers, stream=True, timeout=(20, 120)) as response:
-            if response.status_code == 416 and item.size_bytes and resume_at == item.size_bytes:
-                response.close()
-            else:
-                response.raise_for_status()
-                append = resume_at > 0 and response.status_code == 206
-                if not append:
-                    resume_at = 0
-                response_total = int(response.headers.get("Content-Length", "0") or 0)
-                inferred_size = resume_at + response_total if response_total else item.size_bytes or 0
-                started = time.monotonic()
-                window_started = started
-                window_bytes = 0
-                downloaded = resume_at
-                with part.open("ab" if append else "wb") as handle:
-                    for chunk in response.iter_content(chunk_size=4 * 1024 * 1024):
-                        self._check_cancelled()
-                        if not chunk:
-                            continue
-                        handle.write(chunk)
-                        downloaded += len(chunk)
-                        window_bytes += len(chunk)
-                        now = time.monotonic()
-                        if now - window_started >= 0.4:
-                            speed = int(window_bytes / max(0.001, now - window_started))
-                            expected = item.size_bytes or inferred_size
-                            aggregate_total = total_expected or expected
-                            aggregate_done = completed_before + min(downloaded, expected or downloaded)
-                            self._publish_download_progress(
-                                item,
-                                aggregate_done,
-                                aggregate_total,
-                                downloaded,
-                                speed,
-                                item_index,
-                                total_items,
-                            )
-                            window_started = now
-                            window_bytes = 0
-                    handle.flush()
-                    os.fsync(handle.fileno())
-
-        if item.sha256 and self._sha256(part) != item.sha256:
-            part.unlink(missing_ok=True)
-            raise InstallError(f"Suma SHA-256 nie zgadza się dla {item.name}")
-        part.replace(target)
+        target = self._target(item.destination)
 
         if item.extract:
             self.store.update(message=f"Rozpakowywanie: {item.name}")
             self._extract(target, target.parent, item.extract)
 
-        size = target.stat().st_size
         self._publish_download_progress(
             item,
             completed_before + (item.size_bytes or size),
@@ -277,15 +378,31 @@ class Installer:
         destination = self._target(node.directory)
         if destination.exists() and not (destination / ".git").exists():
             raise InstallError(f"Katalog {node.directory} istnieje, ale nie jest repozytorium git")
-        if not destination.exists():
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            self._run_command(["git", "clone", "--filter=blob:none", node.repository, str(destination)])
-        self._run_command(["git", "-C", str(destination), "fetch", "--depth", "1", "origin", node.revision])
-        self._run_command(["git", "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"])
+        baked_revision = destination / ".aimodelki-baked-revision"
+        current_revision = None
+        if destination.exists() and baked_revision.is_file():
+            current_revision = subprocess.run(
+                ["git", "-C", str(destination), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        preinstalled = (
+            current_revision is not None
+            and current_revision.returncode == 0
+            and current_revision.stdout.strip() == node.revision
+            and baked_revision.read_text(encoding="ascii").strip() == node.revision
+        )
+        if not preinstalled:
+            if not destination.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                self._run_command(["git", "clone", "--filter=blob:none", node.repository, str(destination)])
+            self._run_command(["git", "-C", str(destination), "fetch", "--depth", "1", "origin", node.revision])
+            self._run_command(["git", "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"])
 
         python = str(self._comfy_python())
         requirements = destination / "requirements.txt"
-        if node.install_requirements and requirements.exists():
+        if not preinstalled and node.install_requirements and requirements.exists():
             command = [python, "-m", "pip", "install"]
             if node.upgrade_requirements:
                 command.append("--upgrade")
@@ -295,11 +412,14 @@ class Installer:
                 command.extend(["-c", str(constraint)])
             self._run_command(command, cwd=destination)
 
-        if node.install_script:
+        if node.install_script and not preinstalled:
             script = (destination / node.install_script).resolve()
             if destination not in script.parents or not script.is_file():
                 raise InstallError(f"Brak bezpiecznego skryptu instalacyjnego: {node.install_script}")
             self._run_command([python, str(script)], cwd=destination)
+
+        if not preinstalled:
+            baked_revision.write_text(node.revision + "\n", encoding="ascii")
 
     def _run_command(self, command: list[str], cwd: Path | None = None) -> None:
         process = subprocess.Popen(
@@ -328,14 +448,6 @@ class Installer:
         if not self.restart_script.exists():
             raise InstallError(f"Brak skryptu restartu: {self.restart_script}")
         self._run_command([str(self.restart_script)])
-
-    @staticmethod
-    def _sha256(path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
 
     def _extract(self, archive: Path, destination: Path, kind: str) -> None:
         def safe(member_name: str) -> None:

@@ -23,7 +23,7 @@ class StateStore:
     def _load(self) -> dict[str, Any]:
         try:
             data = json.loads(self.state_file.read_text(encoding="utf-8"))
-            if data.get("status") in {"queued", "downloading", "installing", "restarting"}:
+            if data.get("status") in {"queued", "scanning", "downloading", "verifying", "installing", "restarting"}:
                 data.update(
                     status="interrupted",
                     message="Kontener został zatrzymany podczas instalacji. Uruchom ją ponownie, aby wznowić pliki .part.",

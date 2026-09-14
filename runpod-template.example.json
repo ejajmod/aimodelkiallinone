@@ -1,9 +1,9 @@
 {
   "name": "AIMODELKI ALL IN ONE",
-  "imageName": "aimodelki/aimodelki-allin1:1.0.1",
+  "imageName": "aimodelki/aimodelki-allin1:1.4.0",
   "category": "NVIDIA",
-  "containerDiskInGb": 150,
-  "volumeInGb": 0,
+  "containerDiskInGb": 50,
+  "volumeInGb": 250,
   "volumeMountPath": "/workspace",
   "ports": [
     "3000/http",
@@ -13,7 +13,12 @@
   "dockerEntrypoint": [],
   "dockerStartCmd": [],
   "env": {
-    "LAUNCHER_UPDATE_ENABLED": "0"
+    "LAUNCHER_UPDATE_ENABLED": "0",
+    "COMFYUI_BUNDLE_URL": "https://pub-746aa51431cf4b7eac8a9cf5e44fbf58.r2.dev/runtime/aimodelki-comfyui-1.4.6-cu128.tar.gz",
+    "COMFYUI_BUNDLE_VERSION": "1.4.6-cu128",
+    "COMFYUI_BUNDLE_SHA256": "15195e617e082d19e5fc07f3709d7402190cfe601afa32ab28f0aac7516108b0",
+    "INSTANT_MODELS_DOWNLOAD_CONNECTIONS": "64",
+    "INSTANT_MODELS_DOWNLOAD_SEGMENT_MB": "64"
   },
   "isPublic": false,
   "isServerless": false,

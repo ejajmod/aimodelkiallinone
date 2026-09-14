@@ -13,7 +13,7 @@ if [[ -z "${COMFYUI_PYTHON:-}" ]]; then
     fi
   done
 fi
-COMFYUI_PYTHON="${COMFYUI_PYTHON:-$COMFYUI_ROOT/.venv-cu130/bin/python}"
+COMFYUI_PYTHON="${COMFYUI_PYTHON:-$(command -v python3)}"
 LOG_FILE="${COMFYUI_LOG_FILE:-/workspace/runpod-slim/comfyui-launcher.log}"
 ARGS=(--listen 0.0.0.0 --port 8188 --enable-cors-header)
 

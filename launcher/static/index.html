@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0611" />
     <title>AIMODELKI ALL IN ONE — ComfyUI launcher</title>
     <meta name="description" content="AIMODELKI ALL IN ONE — instalator modeli i custom nodes dla ComfyUI na RunPod." />
-    <link rel="stylesheet" href="/assets/styles.css?v=theme-toggle-20260827" />
+    <link rel="stylesheet" href="/assets/styles.css?v=instant-unified-20260912" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -35,9 +35,40 @@
           <h1>Wybierz swój<br /><em>zestaw roboczy.</em></h1>
         </div>
         <p class="intro-copy">
-          Jeden klik przygotuje modele i rozszerzenia w Twoim środowisku ComfyUI.
-          Instalacja może być wznowiona po przerwaniu.
+          Wybierz pakiet, aby pobrać modele i rozszerzenia do ComfyUI.
+          Jeśli model wymaga ręcznego dodania, pokażemy to przed instalacją.
         </p>
+      </section>
+
+      <section class="instant-section" aria-labelledby="instantTitle">
+        <div class="instant-heading">
+          <div>
+            <span class="micro-label">PRYWATNA BIBLIOTEKA</span>
+            <h2 id="instantTitle">Instant Models</h2>
+            <p>Aktywuj token, aby przyciski katalogu pobierały modele szybko z prywatnej biblioteki R2.</p>
+          </div>
+          <span id="instantBadge" class="instant-badge">INACTIVE</span>
+        </div>
+
+        <div id="instantInactive" class="instant-inactive">
+          <label for="instantToken">Token Instant Models</label>
+          <div class="instant-token-row">
+            <input id="instantToken" type="password" autocomplete="off" spellcheck="false" placeholder="im_live_…" />
+            <button id="instantActivate" class="comfy-button" type="button">Activate Instant Models</button>
+            <a class="instant-purchase" href="https://aimodelki.pl/kontakt" target="_blank" rel="noopener noreferrer" aria-label="Zamów Instant Models — otwórz stronę kontaktową AIMODELKI">Zamów Instant Models <span aria-hidden="true">↗</span></a>
+          </div>
+          <small>Token zapisujemy wyłącznie w prywatnym katalogu <code>/workspace/.instant-models</code>. Zakup Instant Models organizujemy obecnie przez kontakt e-mail.</small>
+        </div>
+
+        <div id="instantActive" class="instant-active" hidden>
+          <div class="instant-connection">
+            <div><span>Połączony token</span><strong id="instantMasked">—</strong></div>
+            <div><span>Ważny do</span><strong id="instantValidUntil">—</strong></div>
+          </div>
+          <div class="instant-controls">
+            <button id="instantDisconnect" class="cancel-button" type="button">Disconnect</button>
+          </div>
+        </div>
       </section>
 
       <section class="catalog-section" aria-labelledby="catalogTitle">
@@ -46,7 +77,10 @@
             <span class="micro-label">DOSTĘPNE PAKIETY</span>
             <h2 id="catalogTitle">Katalog modeli</h2>
           </div>
-          <div class="catalog-count"><strong id="workflowCount">0</strong><span>pakiety</span></div>
+          <div class="catalog-summary">
+            <span id="downloadMode" class="download-mode">Standard Download</span>
+            <div class="catalog-count"><strong id="workflowCount">0</strong><span>pakiety</span></div>
+          </div>
         </div>
 
         <div id="notice" class="notice" hidden></div>
@@ -75,8 +109,10 @@
           </div>
           <span id="jobFiles" class="file-counter"></span>
         </div>
+        <div id="manualGuide" class="manual-guide" hidden></div>
         <div class="job-actions">
           <button id="cancelButton" class="cancel-button" type="button">Zatrzymaj</button>
+          <button id="resumeButton" class="comfy-button" type="button" hidden>Wznów pobieranie <span>↗</span></button>
           <a id="comfyButton" class="comfy-button" href="#" target="_blank" rel="noreferrer" hidden>Przejdź do ComfyUI <span>↗</span></a>
         </div>
       </section>
@@ -87,6 +123,6 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/assets/app.js?v=theme-toggle-20260827" defer></script>
+    <script src="/assets/app.js?v=instant-unified-20260912-4" defer></script>
   </body>
 </html>

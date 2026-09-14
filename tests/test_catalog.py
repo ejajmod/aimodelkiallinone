@@ -127,20 +127,43 @@ def test_production_catalog_pins_every_artifact() -> None:
             assert download.sha256 and re.fullmatch(r"[0-9a-f]{64}", download.sha256)
         for node in workflow.custom_nodes:
             assert re.fullmatch(r"[0-9a-f]{40}", node.revision)
+        for manual in workflow.manual_files:
+            assert manual.size_bytes > 0
+            assert re.fullmatch(r"[0-9a-f]{64}", manual.sha256)
 
 
-def test_image_edit_catalog_matches_production_workflow_model_names() -> None:
+def test_image_edit_installs_support_files_without_hf_token() -> None:
     workflows = load_catalog(PROJECT_ROOT / "catalog" / "catalog.json")
     image_edit = next(workflow for workflow in workflows if workflow.id == "image-edit")
 
-    assert {Path(download.destination).name for download in image_edit.downloads} == {
-        "flux-2-klein-9b.safetensors",
-        "qwen_3_8b_fp8mixed.safetensors",
-        "flux2-vae.safetensors",
-        "breast_slider_9b_klein_20260118_210913.safetensors",
+    assert image_edit.configured is True
+    assert len(image_edit.downloads) == 3
+    assert len(image_edit.custom_nodes) == 3
+    assert len(image_edit.manual_files) == 1
+    assert image_edit.manual_files[0].destination == "models/unet/flux-2-klein-9b.safetensors"
+    assert all(not download.headers for download in image_edit.downloads)
+    assert all("HF_TOKEN" not in workflow.required_env for workflow in workflows)
+    assert all(
+        "flux-2-klein-9b.safetensors" not in download.destination
+        for workflow in workflows
+        for download in workflow.downloads
+    )
+
+
+def test_manual_file_destination_is_validated() -> None:
+    raw = {
+        "version": 1,
+        "workflows": [{
+            "id": "manual-pack",
+            "downloads": [{"url": "https://example.com/a", "destination": "models/a"}],
+            "manual_files": [{
+                "name": "Manual",
+                "destination": "../escape",
+                "size_bytes": 1,
+                "sha256": "a" * 64,
+                "source_url": "https://example.com/manual",
+            }],
+        }],
     }
-    assert {node.revision for node in image_edit.custom_nodes} == {
-        "8ff50e4521881eca1fe26aec9615fc9362474931",
-        "070001b36be2bbdfcf766b6a2d6f14c36cb62906",
-        "3d53de09d8c1fb904d5cb0a137b9bc75e9d77108",
-    }
+    with pytest.raises(CatalogError):
+        parse_catalog(raw)

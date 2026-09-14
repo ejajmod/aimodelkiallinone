@@ -164,22 +164,12 @@
     {
       "id": "image-edit",
       "title": "Image Edit",
-      "description": "Pełny FLUX.2 Klein 9B BF16 z referencjami wieloobrazowymi i LoRA dopasowaną do workflow.",
-      "estimated_size_gb": 25.3,
+      "description": "Pobiera VAE, encoder, LoRA i custom nodes. Główny FLUX.2 Klein 9B dodaj ręcznie po instalacji.",
+      "estimated_size_gb": 8.4,
       "category": "Edycja",
       "accent": "rose",
-      "required_env": ["HF_TOKEN"],
+      "required_env": [],
       "downloads": [
-        {
-          "name": "FLUX.2 Klein 9B BF16",
-          "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/resolve/92196c8e11f7b6cf2b7493e037d8c5345c559216/flux-2-klein-9b.safetensors",
-          "destination": "models/unet/flux-2-klein-9b.safetensors",
-          "size_bytes": 18157185168,
-          "sha256": "0975d6b77b5f510b99547d6724a208e36527df654e8f6134f59ece3f9f30da58",
-          "headers": {
-            "Authorization": "Bearer ${HF_TOKEN}"
-          }
-        },
         {
           "name": "FLUX.2 VAE",
           "url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/ca4ac7c84eb42f3200fffc85b5fbee67129e6ffa/split_files/vae/flux2-vae.safetensors",
@@ -192,10 +182,7 @@
           "url": "https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/3f62d9d8ae1fec33c6e91453d5c712855b096b55/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors",
           "destination": "models/text_encoders/qwen_3_8b_fp8mixed.safetensors",
           "size_bytes": 8664848742,
-          "sha256": "abad16806e0cbabc54e0325d6565847443fe396d5f0be38bb3cd3fe75a1201d6",
-          "headers": {
-            "Authorization": "Bearer ${HF_TOKEN}"
-          }
+          "sha256": "abad16806e0cbabc54e0325d6565847443fe396d5f0be38bb3cd3fe75a1201d6"
         },
         {
           "name": "Klein 9B Breast Slider LoRA",
@@ -203,6 +190,15 @@
           "destination": "models/loras/breast_slider_9b_klein_20260118_210913.safetensors",
           "size_bytes": 1967368,
           "sha256": "e56812de6860eabfdf73d1201ec49b78277c02366afcc1e490190d7972ea3baf"
+        }
+      ],
+      "manual_files": [
+        {
+          "name": "FLUX.2 Klein 9B BF16",
+          "destination": "models/unet/flux-2-klein-9b.safetensors",
+          "size_bytes": 18157185168,
+          "sha256": "0975d6b77b5f510b99547d6724a208e36527df654e8f6134f59ece3f9f30da58",
+          "source_url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/flux-2-klein-9b.safetensors"
         }
       ],
       "custom_nodes": [
@@ -296,6 +292,27 @@
           "repository": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
           "revision": "115de7a9d9e34410cffb9ecfd268e993b11a50fb",
           "directory": "custom_nodes/ComfyUI-VideoHelperSuite",
+          "install_requirements": true
+        },
+        {
+          "name": "ComfyUI Logic",
+          "repository": "https://github.com/theUpsider/ComfyUI-Logic.git",
+          "revision": "ae0ca532177eef7325d207f8b8a2f88f4d1a837c",
+          "directory": "custom_nodes/ComfyUI-Logic",
+          "install_requirements": true
+        },
+        {
+          "name": "NVIDIA RTX Nodes",
+          "repository": "https://github.com/Comfy-Org/Nvidia_RTX_Nodes_ComfyUI.git",
+          "revision": "892515e3eb9a4920a131a502a047e47adca9eb0d",
+          "directory": "custom_nodes/Nvidia_RTX_Nodes_ComfyUI",
+          "install_requirements": true
+        },
+        {
+          "name": "ComfyUI Custom Scripts",
+          "repository": "https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git",
+          "revision": "609f3afaa74b2f88ef9ce8d939626065e3247469",
+          "directory": "custom_nodes/ComfyUI-Custom-Scripts",
           "install_requirements": true
         }
       ]

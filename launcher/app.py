@@ -9,21 +9,21 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import dotenv_values
+from pydantic import BaseModel
 
+from . import __version__
 from .catalog import CatalogError, WorkflowSpec, load_catalog, load_catalog_url
 from .installer import InstallError, Installer
+from .instant_models import InstantModelsError, InstantModelsManager
+from .operations import OperationCoordinator
 from .state import StateStore
 
 
 DEFAULT_APP_ROOT = Path(__file__).resolve().parents[1]
-PUBLIC_HF_TOKEN = "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"
 if os.getenv("LAUNCHER_LOAD_DOTENV", "1").strip().lower() not in {"0", "false", "no"}:
     for key, value in dotenv_values(DEFAULT_APP_ROOT / ".env").items():
         if value is not None and not os.getenv(key):
             os.environ[key] = value
-
-if not os.getenv("HF_TOKEN", "").strip():
-    os.environ["HF_TOKEN"] = PUBLIC_HF_TOKEN
 
 APP_ROOT = Path(os.getenv("LAUNCHER_APP_ROOT", DEFAULT_APP_ROOT))
 STATIC_DIR = APP_ROOT / "launcher" / "static"
@@ -46,8 +46,17 @@ except (CatalogError, OSError, ValueError) as exc:
     catalog_error = str(exc)
 
 store = StateStore(STATE_DIR)
-installer = Installer(COMFYUI_ROOT, store, RESTART_SCRIPT)
-app = FastAPI(title="AIMODELKI ALL IN ONE", version="1.0.0", docs_url=None, redoc_url=None)
+coordinator = OperationCoordinator()
+instant_models = InstantModelsManager(
+    Path(os.getenv("INSTANT_MODELS_STATE_DIR", "/workspace/.instant-models")),
+    os.getenv("INSTANT_MODELS_API_URL", "https://app.aimodelki.pl/api/v1/instant-models"),
+)
+installer = Installer(COMFYUI_ROOT, store, RESTART_SCRIPT, coordinator)
+app = FastAPI(title="AIMODELKI ALL IN ONE", version=__version__, docs_url=None, redoc_url=None)
+
+
+class InstantActivation(BaseModel):
+    token: str
 
 
 def _probe_service(url: str) -> dict[str, object]:
@@ -126,6 +135,12 @@ def health() -> JSONResponse:
         "workspace": _probe_workspace(),
         "comfyui": _probe_comfyui(),
         "jupyter": _probe_service("http://127.0.0.1:8888/api/"),
+        "instant_models": {
+            "ok": True,
+            "required": False,
+            "connected": bool(instant_models.status().get("connected")),
+            "status": instant_models.status().get("status", "idle"),
+        },
     }
     ready = all(bool(check["ok"]) for check in checks.values())
     return JSONResponse(
@@ -138,6 +153,30 @@ def health() -> JSONResponse:
 def bootstrap(request: Request) -> dict[str, object]:
     state = store.get()
     installed = set(state.get("installed_workflows", []))
+    comfyui_root = COMFYUI_ROOT.resolve()
+
+    def manual_file_status(workflow: WorkflowSpec) -> list[dict[str, object]]:
+        files: list[dict[str, object]] = []
+        for item in workflow.manual_files:
+            target = (comfyui_root / item.destination).resolve()
+            inside_root = comfyui_root in target.parents
+            try:
+                detected = inside_root and target.is_file() and target.stat().st_size == item.size_bytes
+            except OSError:
+                detected = False
+            files.append(
+                {
+                    "name": item.name,
+                    "destination": item.destination,
+                    "full_path": str(comfyui_root / item.destination),
+                    "size_bytes": item.size_bytes,
+                    "sha256": item.sha256,
+                    "source_url": item.source_url,
+                    "detected": detected,
+                }
+            )
+        return files
+
     items = [
         {
             "id": workflow.id,
@@ -151,6 +190,7 @@ def bootstrap(request: Request) -> dict[str, object]:
             "installed": workflow.id in installed or (state.get("workflow_id") == workflow.id and state.get("status") == "complete"),
             "file_count": len(workflow.downloads),
             "node_count": len(workflow.custom_nodes),
+            "manual_files": manual_file_status(workflow),
         }
         for workflow in workflows
     ]
@@ -162,6 +202,7 @@ def bootstrap(request: Request) -> dict[str, object]:
             "comfyui": public_service_url(8188, request),
             "jupyter": public_service_url(8888, request),
         },
+        "instant_models": instant_models.status(),
     }
 
 
@@ -170,8 +211,20 @@ def install(workflow_id: str) -> dict[str, object]:
     workflow = next((item for item in workflows if item.id == workflow_id), None)
     if not workflow:
         raise HTTPException(status_code=404, detail="Nie znaleziono pakietu")
+    instant_source = None
+    if instant_models.status().get("connected"):
+        try:
+            instant_source = instant_models.source_for(workflow.id)
+        except InstantModelsError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Instant Models jest aktywny, ale szybkie źródło jest niedostępne: {exc}. "
+                    "Spróbuj ponownie albo rozłącz token, aby użyć Standard Download."
+                ),
+            ) from exc
     try:
-        installer.start(workflow)
+        installer.start(workflow, instant_source)
     except InstallError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"accepted": True, "job": store.get()}
@@ -189,6 +242,31 @@ def cancel() -> dict[str, object]:
 @app.get("/api/jobs/current", dependencies=[Depends(require_token)])
 def current_job() -> dict[str, object]:
     return store.get()
+
+
+@app.get("/api/instant-models/status", dependencies=[Depends(require_token)])
+def instant_status() -> dict[str, object]:
+    return instant_models.status()
+
+
+@app.post("/api/instant-models/activate", dependencies=[Depends(require_token)])
+def instant_activate(payload: InstantActivation) -> dict[str, object]:
+    if installer.active:
+        raise HTTPException(status_code=409, detail="Poczekaj na zakończenie aktywnego instalatora")
+    try:
+        return instant_models.activate(payload.token)
+    except InstantModelsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/instant-models/connection", dependencies=[Depends(require_token)])
+def instant_disconnect() -> dict[str, object]:
+    if installer.active:
+        raise HTTPException(status_code=409, detail="Poczekaj na zakończenie aktywnego instalatora")
+    try:
+        return instant_models.disconnect()
+    except InstantModelsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 def load_app(monkeypatch, tmp_path, token=""):
     monkeypatch.setenv("LAUNCHER_LOAD_DOTENV", "0")
     monkeypatch.setenv("LAUNCHER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("INSTANT_MODELS_STATE_DIR", str(tmp_path / "instant-state"))
     monkeypatch.setenv("COMFYUI_ROOT", str(tmp_path / "ComfyUI"))
     monkeypatch.setenv("RUNPOD_LAUNCHER_TOKEN", token)
     monkeypatch.delenv("HF_TOKEN", raising=False)
@@ -27,6 +28,7 @@ def test_bootstrap_returns_catalog_and_local_service_urls(monkeypatch, tmp_path)
     assert len(payload["workflows"]) == 4
     assert payload["services"]["comfyui"] == "http://testserver:8188"
     assert payload["services"]["jupyter"] == "http://testserver:8888"
+    assert payload["instant_models"]["connected"] is False
     assert payload["workflows"][0]["id"] == "image-generation"
     assert payload["workflows"][0]["configured"] is True
     assert payload["workflows"][0]["file_count"] == 7
@@ -36,18 +38,54 @@ def test_bootstrap_returns_catalog_and_local_service_urls(monkeypatch, tmp_path)
     assert workflows["dataset-generator"]["file_count"] == 7
     assert workflows["dataset-generator"]["node_count"] == 1
     assert workflows["image-edit"]["configured"] is True
-    assert workflows["image-edit"]["missing_env"] == []
-    assert workflows["image-edit"]["file_count"] == 4
+    assert workflows["image-edit"]["file_count"] == 3
     assert workflows["image-edit"]["node_count"] == 3
+    assert workflows["image-edit"]["manual_files"][0]["destination"] == "models/unet/flux-2-klein-9b.safetensors"
+    assert workflows["image-edit"]["manual_files"][0]["detected"] is False
     assert workflows["motion-control"]["configured"] is True
     assert workflows["motion-control"]["file_count"] == 6
-    assert workflows["motion-control"]["node_count"] == 2
+    assert workflows["motion-control"]["node_count"] == 5
     page = client.get("/")
     assert page.status_code == 200
     assert "<b>AIMODELKI</b> ALL IN ONE" in page.text
+    assert "Instant Models" in page.text
+    assert page.text.index('class="instant-section"') < page.text.index('class="catalog-section"')
+    assert "Sync Models" not in page.text
+    assert "Activate Instant Models" in page.text
+    assert "Tryb katalogu" not in page.text
+    assert 'id="resumeButton"' in page.text
+    assert 'href="https://aimodelki.pl/kontakt"' in page.text
 
 
-def test_hugging_face_token_can_override_public_default(monkeypatch, tmp_path) -> None:
+def test_instant_models_starts_disconnected_and_rejects_bad_token(monkeypatch, tmp_path) -> None:
+    module = load_app(monkeypatch, tmp_path)
+    client = TestClient(module.app)
+
+    status_response = client.get("/api/instant-models/status")
+    activation_response = client.post("/api/instant-models/activate", json={"token": "invalid"})
+
+    assert status_response.status_code == 200
+    assert status_response.json()["connected"] is False
+    assert activation_response.status_code == 400
+    assert "format" in activation_response.json()["detail"]
+
+
+def test_active_instant_models_never_falls_back_silently(monkeypatch, tmp_path) -> None:
+    module = load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.instant_models, "status", lambda: {"connected": True})
+
+    def unavailable(_workflow_id):
+        raise module.InstantModelsError("API niedostępne")
+
+    monkeypatch.setattr(module.instant_models, "source_for", unavailable)
+
+    response = TestClient(module.app).post("/api/install/image-generation")
+
+    assert response.status_code == 503
+    assert "rozłącz token" in response.json()["detail"]
+
+
+def test_image_edit_remains_available_without_hugging_face_token(monkeypatch, tmp_path) -> None:
     module = load_app(monkeypatch, tmp_path)
     monkeypatch.setenv("HF_TOKEN", "hf_test_token")
     client = TestClient(module.app)

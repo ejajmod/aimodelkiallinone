@@ -2,7 +2,7 @@ services:
   aimodelki-allin1:
     build:
       context: .
-    image: aimodelki-allin1:1.0
+    image: aimodelki-allin1:1.4.0
     container_name: aimodelki-allin1
     ports:
       - "3000:3000"
@@ -17,6 +17,15 @@ services:
       LAUNCHER_UPDATE_REF: "${LAUNCHER_UPDATE_REF:-main}"
       COMFYUI_ROOT: "${COMFYUI_ROOT:-/workspace/runpod-slim/ComfyUI}"
       LAUNCHER_STATE_DIR: "${LAUNCHER_STATE_DIR:-/workspace/.aimodelki-allinone}"
+      INSTANT_MODELS_STATE_DIR: "${INSTANT_MODELS_STATE_DIR:-/workspace/.instant-models}"
+      INSTANT_MODELS_API_URL: "${INSTANT_MODELS_API_URL:-https://app.aimodelki.pl/api/v1/instant-models}"
+      INSTANT_MODELS_DOWNLOAD_HOSTS: "${INSTANT_MODELS_DOWNLOAD_HOSTS:-.r2.cloudflarestorage.com}"
+      INSTANT_MODELS_DOWNLOAD_CONNECTIONS: "${INSTANT_MODELS_DOWNLOAD_CONNECTIONS:-64}"
+      INSTANT_MODELS_DOWNLOAD_SEGMENT_MB: "${INSTANT_MODELS_DOWNLOAD_SEGMENT_MB:-64}"
+      INSTANT_MODELS_DISK_RESERVE_GB: "${INSTANT_MODELS_DISK_RESERVE_GB:-5}"
+      COMFYUI_BUNDLE_URL: "${COMFYUI_BUNDLE_URL:-https://pub-746aa51431cf4b7eac8a9cf5e44fbf58.r2.dev/runtime/aimodelki-comfyui-1.4.6-cu128.tar.gz}"
+      COMFYUI_BUNDLE_VERSION: "${COMFYUI_BUNDLE_VERSION:-1.4.6-cu128}"
+      COMFYUI_BUNDLE_SHA256: "${COMFYUI_BUNDLE_SHA256:-15195e617e082d19e5fc07f3709d7402190cfe601afa32ab28f0aac7516108b0}"
       HF_TOKEN: "${HF_TOKEN:-}"
     restart: unless-stopped
     volumes:
