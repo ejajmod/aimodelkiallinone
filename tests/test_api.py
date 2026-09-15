@@ -196,7 +196,7 @@ def test_bootstrap_reports_cuda_runtime_and_gpu(monkeypatch, tmp_path) -> None:
 
     payload = TestClient(module.app).get("/api/bootstrap").json()
 
-    assert payload["runtime"] == {"cuda": "13.0", "variant": "cu130"}
+    assert payload["runtime"] == {"cuda": "12.8", "variant": "cu128"}
     assert payload["gpu"]["ok"] is True
 
 
@@ -226,7 +226,7 @@ def test_health_reports_an_incompatible_gpu(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         module.gpu,
         "query_devices",
-        lambda *args, **kwargs: [module.gpu.GpuDevice("NVIDIA GeForce RTX 4090", "570.144", (8, 9))],
+        lambda *args, **kwargs: [module.gpu.GpuDevice("NVIDIA GeForce RTX 4090", "560.35.03", (8, 9))],
     )
     module.gpu.reset_cache()
     monkeypatch.setattr(
@@ -242,4 +242,4 @@ def test_health_reports_an_incompatible_gpu(monkeypatch, tmp_path) -> None:
 
     assert response.status_code == 503
     assert response.json()["checks"]["gpu"]["ok"] is False
-    assert "580" in response.json()["checks"]["gpu"]["problems"][0]
+    assert "570" in response.json()["checks"]["gpu"]["problems"][0]

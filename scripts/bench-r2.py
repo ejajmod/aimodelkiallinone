@@ -110,6 +110,34 @@ def disk_write(directory: Path, total: int) -> float | None:
         target.unlink(missing_ok=True)
 
 
+def rangefetch_run(url: str, directory: Path, total: int, connections: int) -> tuple[float, float] | None:
+    """Download the first ``total`` bytes with rangefetch; returns MiB/s and CPU cores used."""
+    binary = shutil.which("rangefetch")
+    if not binary:
+        print("  ! rangefetch is not installed")
+        return None
+    output = directory / ".aimodelki-bench-rangefetch.bin"
+    before = os.times()
+    started = time.monotonic()
+    process = subprocess.run(
+        [binary, "-out", str(output), "-size", str(total), "-connections", str(connections), "-segment-mb", "16"],
+        input=url + "\n",
+        text=True,
+        capture_output=True,
+    )
+    wall = time.monotonic() - started
+    after = os.times()
+    try:
+        if process.returncode:
+            print(f"  ! rangefetch exited with {process.returncode}: {process.stderr.strip()[-200:]}")
+            return None
+        cpu = (after.children_user + after.children_system - before.children_user - before.children_system) / wall
+        return total / MIB / wall, cpu
+    finally:
+        output.unlink(missing_ok=True)
+        output.with_name(output.name + ".segments.json").unlink(missing_ok=True)
+
+
 def aria2_full(url: str, directory: Path, connections: int) -> float | None:
     if not shutil.which("aria2c"):
         print("  ! aria2c is not installed")
@@ -176,6 +204,15 @@ def main() -> None:
     for streams in (16, 64):
         print(f"  python {streams:>2} streams: {python_ranges(url, total, streams):8.0f} MiB/s")
 
+    print(f"\nrangefetch (the Instant Download engine), {total // MIB} MiB:")
+    targets = [Path("/dev/shm")] if Path("/dev/shm").is_dir() else []
+    targets += [directory for directory in args.dirs if directory.exists()][:1]
+    for directory in targets:
+        for connections in (32, 64, 128):
+            result = rangefetch_run(url, directory, total, connections)
+            if result is not None:
+                print(f"  {str(directory):12s} {connections:>3} connections: {result[0]:8.0f} MiB/s   CPU {result[1]:4.1f} cores")
+
     print("\nDisk write with fsync:")
     for directory in args.dirs:
         speed = disk_write(directory, min(total, 4096 * MIB))
@@ -190,8 +227,9 @@ def main() -> None:
                 print(f"  {directory}: {speed:8.0f} MiB/s")
 
     print(
-        "\nReading: if curl 64 streams is far above python 64 streams, the CPU limits the Python "
-        "downloader; if the disk write is below the network figure, the disk is the bottleneck."
+        "\nReading: rangefetch into /dev/shm shows the network ceiling; if /workspace is much slower, "
+        "the disk is the bottleneck. If rangefetch stops scaling from 64 to 128 connections while "
+        "using few cores, the route or R2 limits the download."
     )
 
 

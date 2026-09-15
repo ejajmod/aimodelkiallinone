@@ -35,7 +35,7 @@ class GpuDevice:
 
 
 def current_runtime() -> CudaRuntime:
-    return RUNTIMES.get(os.getenv("AIMODELKI_CUDA_VARIANT", "cu130").strip().lower(), RUNTIMES["cu130"])
+    return RUNTIMES.get(os.getenv("AIMODELKI_CUDA_VARIANT", "cu128").strip().lower(), RUNTIMES["cu128"])
 
 
 def parse_nvidia_smi(output: str) -> list[GpuDevice]:

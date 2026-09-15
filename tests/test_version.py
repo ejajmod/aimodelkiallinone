@@ -25,12 +25,16 @@ def test_image_version_matches_launcher_and_template() -> None:
     assert not any(key.startswith("COMFYUI_BUNDLE") for key in template["env"])
 
 
-def test_image_runs_stock_comfyui_on_cuda_13() -> None:
+def test_image_shares_layers_with_runpod_comfyui_latest() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    # runpod/comfyui:latest is 1.4.7-cuda12.8; its layers are the likeliest to be cached on hosts.
     assert (
-        "runpod/comfyui:1.4.6-cuda13.0@sha256:0bf75436da591e0f26d299af3741e07cb8ce8ce36566d1a7d8d78aae458e5d67"
+        "ARG BASE_IMAGE=runpod/comfyui:1.4.7-cuda12.8@sha256:2cb4015beb6e16b0bbc05ed5d1e39288545b7f4ce8fed9534f4ef0fa88aa2e4d"
         in dockerfile
     )
+    assert "ARG CUDA_VARIANT=cu128" in dockerfile
+    assert "onnxruntime-gpu==1.26.0" in dockerfile
+    assert "COPY --from=rangefetch /out/rangefetch /usr/local/bin/rangefetch" in dockerfile
     assert "COMFYUI_BUNDLE" not in dockerfile
     assert "bake-custom-nodes" not in dockerfile
     # Launcher code is the last layer, so a UI change does not invalidate the dependencies.

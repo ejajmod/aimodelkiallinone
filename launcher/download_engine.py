@@ -25,8 +25,11 @@ class DownloadError(RuntimeError):
 
 
 URL_PATTERN = re.compile(r"https?://\S+")
+MIB = 1024 * 1024
 # aria2c exit status for "checksum validation failed".
 ARIA2_CHECKSUM_FAILED = 32
+# rangefetch exit status for HTTP 401/403: the presigned URL must be renewed.
+RANGEFETCH_FORBIDDEN = 3
 
 
 def redact_urls(text: str) -> str:
@@ -58,15 +61,19 @@ class DownloadEngine:
         parallel_threshold: int = 256 * 1024 * 1024,
         aria2c: str | None = None,
         aria2_connections: int = 16,
+        rangefetch: str | None = None,
+        rangefetch_connections: int = 64,
     ):
         self.root = root.resolve()
         self.attempts = attempts
         self.chunk_size = chunk_size
-        self.parallelism = max(1, min(int(parallelism), 64))
+        self.parallelism = max(1, min(int(parallelism), 256))
         self.segment_size = max(self.chunk_size, int(segment_size))
         self.parallel_threshold = max(self.segment_size, int(parallel_threshold))
         self.aria2c = aria2c
         self.aria2_connections = max(1, min(int(aria2_connections), 16))
+        self.rangefetch = rangefetch
+        self.rangefetch_connections = max(1, min(int(rangefetch_connections), 512))
         self._local = threading.local()
 
     def target(self, relative: str) -> Path:
@@ -165,7 +172,9 @@ class DownloadEngine:
                 raise DownloadCancelled()
             try:
                 verified = False
-                if self._use_aria2(item, part):
+                if self._use_rangefetch(item, part):
+                    self._transfer_rangefetch(item, part, cancelled, progress)
+                elif self._use_aria2(item, part):
                     verified = self._transfer_aria2(item, part, cancelled, progress)
                 elif (
                     self.parallelism > 1
@@ -217,9 +226,110 @@ class DownloadEngine:
     def _aria2_control_path(part: Path) -> Path:
         return part.with_name(part.name + ".aria2")
 
+    def _use_rangefetch(self, item: DownloadRequest, part: Path) -> bool:
+        # Large files only; a download aria2c started keeps its own control file and
+        # only aria2c can finish it.
+        return bool(
+            self.rangefetch
+            and item.size_bytes
+            and item.size_bytes >= self.parallel_threshold
+            and not self._aria2_control_path(part).exists()
+        )
+
     def _use_aria2(self, item: DownloadRequest, part: Path) -> bool:
-        # Segments written by the Python engine can only be finished by that engine.
+        # Segments written by the Python engine or rangefetch are finished by those engines.
         return bool(self.aria2c and item.size_bytes and not self._metadata_path(part).exists())
+
+    @staticmethod
+    def _header_lines(item: DownloadRequest, prefix: str) -> list[str]:
+        lines = []
+        for key, value in item.headers.items():
+            if not value:
+                continue
+            if any(character in f"{key}{value}" for character in "\r\n"):
+                raise DownloadError(f"Nieprawidłowy nagłówek żądania dla {item.name}")
+            lines.append(f"{prefix}{key}: {value}")
+        return lines
+
+    def rangefetch_invocation(self, item: DownloadRequest, part: Path, url: str) -> tuple[list[str], str]:
+        """Build the rangefetch command line and its stdin (URL and headers, never argv)."""
+        if not self.rangefetch:
+            raise DownloadError("rangefetch nie jest dostępny")
+        command = [
+            self.rangefetch,
+            "-out",
+            str(part),
+            "-size",
+            str(int(item.size_bytes or 0)),
+            "-connections",
+            str(self.rangefetch_connections),
+            # Same segment layout as the Python engine, so each can resume the other.
+            "-segment-mb",
+            str(max(1, self.segment_size // MIB)),
+        ]
+        return command, "\n".join([url, *self._header_lines(item, "")]) + "\n"
+
+    def _transfer_rangefetch(
+        self,
+        item: DownloadRequest,
+        part: Path,
+        cancelled: Callable[[], bool],
+        progress: Callable[[int, int, int], None],
+    ) -> None:
+        expected = int(item.size_bytes or 0)
+        command, input_file = self.rangefetch_invocation(item, part, item.url_provider())
+        part.parent.mkdir(parents=True, exist_ok=True)
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        latest = {"downloaded": 0, "speed": 0}
+        errors: list[str] = []
+
+        def read_progress() -> None:
+            for line in process.stdout:
+                try:
+                    state = json.loads(line)
+                    latest["downloaded"] = int(state.get("downloaded", 0))
+                    latest["speed"] = int(state.get("speed", 0))
+                except (ValueError, TypeError, AttributeError):
+                    continue
+
+        readers = [
+            threading.Thread(target=read_progress, daemon=True),
+            threading.Thread(target=lambda: errors.append(process.stderr.read()), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+        try:
+            process.stdin.write(input_file)
+            process.stdin.close()
+        except OSError:
+            # rangefetch exited before reading its input; the exit status explains why.
+            pass
+
+        while process.poll() is None:
+            if cancelled():
+                # Completed segments are saved on SIGTERM, so the next start resumes them.
+                self._stop_process(process)
+                raise DownloadCancelled()
+            time.sleep(0.5)
+            progress(min(latest["downloaded"], expected), expected, latest["speed"])
+        for reader in readers:
+            reader.join(timeout=5)
+
+        detail = redact_urls("".join(errors).strip())[-300:]
+        if process.returncode == RANGEFETCH_FORBIDDEN:
+            # The next attempt asks for a fresh presigned URL.
+            raise DownloadError(f"Serwer odrzucił adres pobierania ({detail or 'HTTP 403'})")
+        if process.returncode:
+            raise DownloadError(f"rangefetch zakończył pracę z kodem {process.returncode}. {detail}".strip())
+        progress(expected, expected, 0)
 
     def aria2_invocation(self, item: DownloadRequest, part: Path, url: str) -> tuple[list[str], str]:
         """Build the aria2c command line and its input file.
@@ -258,13 +368,7 @@ class DownloadEngine:
         ]
         if item.sha256:
             command.append(f"--checksum=sha-256={item.sha256.lower()}")
-        lines = [url, f"  dir={part.parent}", f"  out={part.name}"]
-        for key, value in item.headers.items():
-            if not value:
-                continue
-            if any(character in f"{key}{value}" for character in "\r\n"):
-                raise DownloadError(f"Nieprawidłowy nagłówek żądania dla {item.name}")
-            lines.append(f"  header={key}: {value}")
+        lines = [url, f"  dir={part.parent}", f"  out={part.name}", *self._header_lines(item, "  header=")]
         return command, "\n".join(lines) + "\n"
 
     @staticmethod

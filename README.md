@@ -26,18 +26,17 @@ Workflow JSON files are not included. The template installs only models, support
 
 - **ComfyUI comes from the image.** The stock RunPod start script copies the ComfyUI bundled in `runpod/comfyui` to `/workspace/runpod-slim/ComfyUI` on first start, creates its venv and starts SSH, FileBrowser, JupyterLab and ComfyUI. Nothing is downloaded to get ComfyUI running. The launcher starts next to it on port `3000`.
 - **Custom nodes are installed per package.** Choosing a package installs only the nodes it needs, each pinned to one commit. A node comes from its R2 archive when the catalog lists the archive checksum; otherwise only that commit is fetched from GitHub, without history. The Python dependencies of all catalog nodes are already in the image, so `pip` only confirms them. ComfyUI is then restarted through ComfyUI-Manager.
-- **Models download with aria2c.** Up to 4 files download at once, each over up to 16 connections. aria2c verifies the SHA-256 itself, and a verified file is never hashed again unless it changes. The built-in Python downloader remains as a fallback and finishes `.part` files that an earlier version started.
+- **Large models download with `rangefetch`.** This small native downloader, built from `tools/rangefetch`, fetches a file over many keep-alive HTTP range connections (128 per file for Instant Models) on every CPU core and writes each segment straight to its place in the file. Up to 4 files download at once. Small files use aria2c, and the built-in Python downloader remains as a fallback; all of them resume each other's `.part` files. Every file is checked against its SHA-256, and a verified file is never hashed again unless it changes.
+- **The image shares its base with `runpod/comfyui:latest`**, the image behind RunPod's own ComfyUI template. A host that already ran that template only pulls this image's own layers (about 0.6 GB).
 
 ## GPU and CUDA
 
 | Image tag | CUDA | NVIDIA driver | Supported GPUs |
 | --- | --- | --- | --- |
-| `1.6.0` | 13.0 | 580 or newer | Turing and newer, for example RTX 5090, RTX PRO 6000, B200, H100, RTX 4090, L40S, L4, RTX 6000 Ada, A100, A40, RTX A6000, RTX 3090, T4 |
-| `1.6.0-cu128` | 12.8 | 570 or newer | The GPUs above plus Volta (V100) |
+| `1.6.1` | 12.8 | 570 or newer | Volta and newer, for example RTX 5090, RTX PRO 6000, B200, H100, RTX 4090, L40S, L4, RTX 6000 Ada, A100, A40, RTX A6000, RTX 3090, T4, V100 |
+| `1.6.1-cu130` | 13.0 | 580 or newer | Turing and newer (no V100) |
 
-When deploying `1.6.0`, filter RunPod machines by CUDA version 13.0 so that the Pod gets a driver 580 or newer. If the driver or the GPU does not match the image, `/api/health` reports it under `checks.gpu` and the launcher shows a warning with the reason.
-
-In the `1.6.0-cu128` variant, `onnxruntime-gpu` (built for CUDA 13) falls back to the CPU, so ONNX pre-processing in Video Motion Control is slower there.
+If the driver or the GPU does not match the image, `/api/health` reports it under `checks.gpu` and the launcher shows a warning with the reason.
 
 ## Getting Started
 
@@ -53,7 +52,7 @@ In the `1.6.0-cu128` variant, `onnxruntime-gpu` (built for CUDA 13) falls back t
 
 | RunPod setting | Value |
 | --- | --- |
-| Container image | `aimodelki/aimodelki-allin1:1.6.0` |
+| Container image | `aimodelki/aimodelki-allin1:1.6.1` |
 | Container Disk | `50 GB` |
 | Volume Disk | `250 GB` |
 | Volume Mount Path | `/workspace` |
@@ -67,17 +66,17 @@ Environment variables:
 LAUNCHER_UPDATE_ENABLED=0
 AIMODELKI_DOWNLOAD_PARALLEL_FILES=4
 AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE=16
-INSTANT_MODELS_DOWNLOAD_CONNECTIONS=64
-INSTANT_MODELS_DOWNLOAD_SEGMENT_MB=64
+INSTANT_MODELS_DOWNLOAD_CONNECTIONS=128
+INSTANT_MODELS_DOWNLOAD_SEGMENT_MB=16
 ```
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `AIMODELKI_DOWNLOAD_PARALLEL_FILES` | `4` | Files downloaded at the same time (`1`–`8`). |
-| `AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE` | `16` | aria2c connections per file (`1`–`16`). Reduce it if a route returns repeated R2 `429`/`5xx` responses. |
-| `AIMODELKI_DOWNLOADER` | `auto` | `python` forces the built-in downloader instead of aria2c. |
-| `INSTANT_MODELS_DOWNLOAD_CONNECTIONS` | `64` | Built-in downloader only: HTTP Range streams per R2 file (`1`–`64`). |
-| `INSTANT_MODELS_DOWNLOAD_SEGMENT_MB` | `64` | Built-in downloader only: resumable segment size in MiB. |
+| `INSTANT_MODELS_DOWNLOAD_CONNECTIONS` | `128` | Instant Download: connections per R2 file (`1`–`256`). Raise it when a Pod has bandwidth and CPU to spare; reduce it if R2 returns repeated `429`/`5xx` responses. |
+| `AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE` | `16` | Standard Download: connections per file (aria2c uses at most 16). |
+| `INSTANT_MODELS_DOWNLOAD_SEGMENT_MB` | `16` | Resumable segment size in MiB. A file uses at most one connection per segment, so smaller segments let smaller files use every connection. |
+| `AIMODELKI_DOWNLOADER` | `auto` | `aria2` skips rangefetch; `python` forces the built-in downloader. |
 | `AIMODELKI_NODE_ARCHIVE_BASE_URL` | public R2 `custom-nodes/` | Where pinned custom-node archives are downloaded from. |
 
 No Hugging Face token is embedded in the image or required for automatic built-in downloads. Instant Models requires an AIMODELKI token from the account page.
@@ -99,12 +98,12 @@ Only one package can be installed at a time. Other package cards remain locked d
 ## Building the images
 
 ```bash
-docker build -t aimodelki/aimodelki-allin1:1.6.0 .
+docker build -t aimodelki/aimodelki-allin1:1.6.1 .
 
 docker build \
-  --build-arg BASE_IMAGE=runpod/comfyui:1.4.6-cuda12.8@sha256:ce5e842ca0c7233a983ff76a83739b445172259c77a43a117453ef7e6a64d0b7 \
-  --build-arg CUDA_VARIANT=cu128 \
-  -t aimodelki/aimodelki-allin1:1.6.0-cu128 .
+  --build-arg BASE_IMAGE=runpod/comfyui:1.4.7-cuda13.0@sha256:094dc6d79448b6f118c4d2b054073f92d765c568598e7a96aaeda678a6bcbf3b \
+  --build-arg CUDA_VARIANT=cu130 \
+  -t aimodelki/aimodelki-allin1:1.6.1-cu130 .
 ```
 
 `docker/custom-node-requirements.txt` lists the Python dependencies of every catalog node at its pinned revision. Regenerate it whenever a node revision in `catalog/catalog.json` changes. A node directory must use the same revision in every package, which the catalog loader enforces.
@@ -125,7 +124,7 @@ Run this on the Pod (JupyterLab terminal or SSH) to see whether the network, the
 python3 /opt/workflow-launcher/scripts/bench-r2.py --instant image-generation
 ```
 
-It compares curl and Python at 1, 16 and 64 streams, measures disk writes on `/workspace` and the container disk, and never prints the presigned URL. Add `--full` to download the whole file once with aria2c into each directory.
+It measures rangefetch at 32, 64 and 128 connections into RAM and into `/workspace`, compares curl and Python streams, measures disk writes on `/workspace` and the container disk, and never prints the presigned URL. Add `--full` to download the whole file once with aria2c into each directory.
 
 ## Services
 
@@ -190,6 +189,10 @@ Model installation and the browser interfaces are available only in Pod mode.
 
 ## Version History
 
+- **1.6.1**
+  - Base image `runpod/comfyui:1.4.7-cuda12.8`, the same layers as `runpod/comfyui:latest`, so Pods start faster on hosts that already ran RunPod's ComfyUI template; CUDA 13.0 moves to the `-cu130` tag.
+  - New `rangefetch` downloader for large files: many keep-alive connections across all CPU cores, 128 per file for Instant Models in 16 MiB segments, with resume shared with the Python downloader and automatic renewal of an expired presigned URL.
+  - `onnxruntime-gpu` pinned to 1.26.0, the last release built for CUDA 12.
 - **1.6.0**
   - CUDA 13.0 base image by default, with a CUDA 12.8 variant for drivers 570–579 and Volta GPUs.
   - ComfyUI starts from the image through the stock RunPod start script instead of a runtime bundle downloaded from R2; SSH and FileBrowser are available again.
