@@ -34,6 +34,64 @@ class FakeClient:
         return self._url
 
 
+class ScriptedSession:
+    """Returns prepared API responses in order and records how many were requested."""
+
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def request(self, *_args, **_kwargs):
+        self.calls += 1
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def api_response(status: int, payload=None, content_type: str = "application/json") -> requests.Response:
+    response = requests.Response()
+    response.status_code = status
+    response.headers["Content-Type"] = content_type
+    response._content = json.dumps(payload).encode() if payload is not None else b"<html>error</html>"
+    return response
+
+
+def test_api_retries_a_temporarily_unavailable_service(monkeypatch) -> None:
+    from launcher.instant_models import InstantModelsClient
+
+    monkeypatch.setattr("launcher.instant_models.time.sleep", lambda _seconds: None)
+    session = ScriptedSession(
+        api_response(503, {"error": "Instant Models service is temporarily unavailable."}),
+        requests.ConnectionError("reset"),
+        api_response(200, {"url": "https://bucket.r2.cloudflarestorage.com/models/a?X-Amz-Signature=s"}),
+    )
+    client = InstantModelsClient("https://api.example.invalid/api/v1/instant-models", "im_live_" + "a" * 43, session)
+
+    assert client.download_url("model-1").startswith("https://bucket.r2.cloudflarestorage.com/")
+    assert session.calls == 3
+
+
+def test_api_errors_name_the_status_and_server_message(monkeypatch) -> None:
+    from launcher.instant_models import InstantModelsClient, InstantModelsError
+
+    monkeypatch.setattr("launcher.instant_models.time.sleep", lambda _seconds: None)
+    base = "https://api.example.invalid/api/v1/instant-models"
+    token = "im_live_" + "a" * 43
+
+    missing = InstantModelsClient(base, token, ScriptedSession(api_response(404, {"error": "Model is unavailable."})))
+    with pytest.raises(InstantModelsError, match=r"files/model-1/download-url \(HTTP 404: Model is unavailable\.\)"):
+        missing.download_url("model-1")
+
+    down = InstantModelsClient(base, token, ScriptedSession(*[api_response(503, {"error": "down"})] * 3))
+    with pytest.raises(InstantModelsError, match=r"HTTP 503 dla manifest: down"):
+        down.manifest()
+
+    proxy_page = InstantModelsClient(base, token, ScriptedSession(api_response(200, None, "text/html")))
+    with pytest.raises(InstantModelsError, match=r"HTTP 200, odpowiedź text/html"):
+        proxy_page.manifest()
+
+
 def test_coordinator_allows_only_one_model_writer() -> None:
     coordinator = OperationCoordinator()
     coordinator.acquire("workflow")

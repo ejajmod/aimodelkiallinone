@@ -72,24 +72,19 @@ class Installer:
         self._cancel = threading.Event()
         self._guard = threading.Lock()
         self.coordinator = coordinator or OperationCoordinator()
-        # auto: rangefetch for large files, aria2c for small ones, Python as the fallback.
+        # Standard Download: one plain request per file and one file at a time, like a browser
+        # download. It stays gentle on public hosts such as Hugging Face.
+        self.download_engine = DownloadEngine(self.comfyui_root)
+
+        # Instant Download: rangefetch for large files, aria2c for small ones, Python as the
+        # fallback, with several files at once.
         downloader = os.getenv("AIMODELKI_DOWNLOADER", "auto").strip().lower()
         rangefetch = shutil.which("rangefetch") if downloader in {"auto", "rangefetch"} else None
         aria2c = shutil.which("aria2c") if downloader in {"auto", "rangefetch", "aria2"} else None
-        connections_per_file = self._env_int("AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE", 16, 1, 256)
         self.parallel_files = self._env_int("AIMODELKI_DOWNLOAD_PARALLEL_FILES", 4, 1, 8)
         # Small segments let even a 1 GB file use every connection.
         segment_mb = self._env_int("INSTANT_MODELS_DOWNLOAD_SEGMENT_MB", 16, 4, 1024)
         segment_size = segment_mb * 1024 * 1024
-        self.download_engine = DownloadEngine(
-            self.comfyui_root,
-            segment_size=segment_size,
-            parallel_threshold=segment_size * 2,
-            aria2c=aria2c,
-            aria2_connections=connections_per_file,
-            rangefetch=rangefetch,
-            rangefetch_connections=connections_per_file,
-        )
         # R2 throughput grows with connections; 128 keeps 500 MiB/s even at ~4 MiB/s per connection.
         connections = self._env_int("INSTANT_MODELS_DOWNLOAD_CONNECTIONS", 128, 1, 256)
         self.instant_download_engine = DownloadEngine(
@@ -98,7 +93,7 @@ class Installer:
             segment_size=segment_size,
             parallel_threshold=segment_size * 2,
             aria2c=aria2c,
-            aria2_connections=connections_per_file,
+            aria2_connections=16,
             rangefetch=rangefetch,
             rangefetch_connections=connections,
         )
@@ -127,7 +122,9 @@ class Installer:
         return next((candidate for candidate in candidates if candidate.is_file()), Path(sys.executable))
 
     def _connection_count(self, instant: bool) -> int:
-        engine = self.instant_download_engine if instant else self.download_engine
+        if not instant:
+            return 1
+        engine = self.instant_download_engine
         if engine.rangefetch:
             return self.parallel_files * engine.rangefetch_connections
         if engine.aria2c:
@@ -326,9 +323,14 @@ class Installer:
             self.coordinator.release("workflow")
 
     def _download_many(self, downloads: list[ResolvedDownload], total_items: int) -> None:
-        """Download up to ``parallel_files`` files at once with one aggregate progress."""
+        """Download the package files with one aggregate progress.
+
+        Instant Download runs up to ``parallel_files`` files at once; Standard Download
+        fetches one file after another.
+        """
         if not downloads:
             return
+        workers = self.parallel_files if any(item.instant for item in downloads) else 1
         total_expected = sum(item.spec.size_bytes or 0 for item in downloads)
         guard = threading.Lock()
         abort = threading.Event()
@@ -372,7 +374,7 @@ class Installer:
                 finished += 1
                 publish()
 
-        with ThreadPoolExecutor(max_workers=min(self.parallel_files, len(downloads))) as executor:
+        with ThreadPoolExecutor(max_workers=min(workers, len(downloads))) as executor:
             futures = [executor.submit(run, index, resolved) for index, resolved in enumerate(downloads)]
             completed, _ = wait(futures, return_when=FIRST_EXCEPTION)
             if any(future.exception() for future in completed):

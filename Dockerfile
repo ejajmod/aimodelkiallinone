@@ -23,11 +23,11 @@ ARG CUDA_VARIANT=cu128
 
 LABEL org.opencontainers.image.title="AIMODELKI ALL IN ONE" \
       org.opencontainers.image.description="ComfyUI, JupyterLab, workflow installers and Instant Models for RunPod" \
-      org.opencontainers.image.version="1.6.1"
+      org.opencontainers.image.version="1.6.2"
 
 USER root
 
-# aria2 downloads small files. The stock RunPod start script is kept and run next to
+# aria2 downloads small Instant Models files. The stock RunPod start script is kept and run next to
 # the launcher, so ComfyUI, its venv, SSH, FileBrowser and JupyterLab come from the base.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends aria2 \
@@ -76,8 +76,7 @@ ENV PYTHONUNBUFFERED=1 \
     INSTANT_MODELS_DOWNLOAD_CONNECTIONS=128 \
     INSTANT_MODELS_DOWNLOAD_SEGMENT_MB=16 \
     INSTANT_MODELS_DISK_RESERVE_GB=5 \
-    AIMODELKI_DOWNLOAD_PARALLEL_FILES=4 \
-    AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE=16
+    AIMODELKI_DOWNLOAD_PARALLEL_FILES=4
 
 EXPOSE 3000 8188 8888
 

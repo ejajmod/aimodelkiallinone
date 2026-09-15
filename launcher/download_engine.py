@@ -183,6 +183,10 @@ class DownloadEngine:
                 ):
                     self._transfer_parallel(item, part, cancelled, progress)
                 else:
+                    if metadata.exists() or control.exists():
+                        # A segmented .part has holes, so one stream cannot continue it.
+                        part.unlink(missing_ok=True)
+                        control.unlink(missing_ok=True)
                     metadata.unlink(missing_ok=True)
                     self._transfer(item, part, cancelled, progress)
                 if item.size_bytes and part.stat().st_size != item.size_bytes:

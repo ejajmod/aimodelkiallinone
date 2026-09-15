@@ -2,7 +2,7 @@ services:
   aimodelki-allin1:
     build:
       context: .
-    image: aimodelki-allin1:1.6.1
+    image: aimodelki-allin1:1.6.2
     container_name: aimodelki-allin1
     ports:
       - "3000:3000"
@@ -25,7 +25,6 @@ services:
       INSTANT_MODELS_DISK_RESERVE_GB: "${INSTANT_MODELS_DISK_RESERVE_GB:-5}"
       AIMODELKI_DOWNLOADER: "${AIMODELKI_DOWNLOADER:-auto}"
       AIMODELKI_DOWNLOAD_PARALLEL_FILES: "${AIMODELKI_DOWNLOAD_PARALLEL_FILES:-4}"
-      AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE: "${AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE:-16}"
       AIMODELKI_NODE_ARCHIVE_BASE_URL: "${AIMODELKI_NODE_ARCHIVE_BASE_URL:-https://pub-746aa51431cf4b7eac8a9cf5e44fbf58.r2.dev/custom-nodes}"
       HF_TOKEN: "${HF_TOKEN:-}"
     restart: unless-stopped

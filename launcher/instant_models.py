@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -99,16 +100,40 @@ class InstantModelsClient:
         self.token = token
         self.session = session or requests.Session()
 
-    def _request(self, method: str, relative: str) -> dict[str, Any]:
+    RETRYABLE_STATUS = {502, 503, 504}
+    ATTEMPTS = 3
+
+    @staticmethod
+    def _server_detail(response: requests.Response) -> str:
+        """The API's own error text, or the content type when it did not send JSON."""
         try:
-            response = self.session.request(
-                method,
-                urljoin(self.base_url, relative.lstrip("/")),
-                headers={"Authorization": f"Bearer {self.token}"},
-                timeout=(10, 45),
-            )
-        except requests.RequestException as exc:
-            raise InstantModelsError("Centralne Instant Models API jest niedostępne") from exc
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+            return payload["error"][:200]
+        return f"odpowiedź {response.headers.get('Content-Type') or 'bez typu'}"
+
+    def _request(self, method: str, relative: str) -> dict[str, Any]:
+        response: requests.Response | None = None
+        for attempt in range(self.ATTEMPTS):
+            if attempt:
+                time.sleep(2**attempt)
+            try:
+                response = self.session.request(
+                    method,
+                    urljoin(self.base_url, relative.lstrip("/")),
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=(10, 45),
+                )
+            except requests.RequestException as exc:
+                if attempt + 1 == self.ATTEMPTS:
+                    raise InstantModelsError("Centralne Instant Models API jest niedostępne") from exc
+                continue
+            # A restarting or briefly overloaded service answers 502-504; ask again.
+            if response.status_code not in self.RETRYABLE_STATUS:
+                break
+        assert response is not None
         if response.status_code in {401, 402, 403}:
             message = {
                 401: "Token Instant Models jest nieprawidłowy",
@@ -118,13 +143,24 @@ class InstantModelsClient:
             raise InstantModelsError(message)
         if response.status_code == 429:
             raise InstantModelsError("Zbyt wiele żądań do Instant Models API")
+        detail = self._server_detail(response)
+        if response.status_code == 404:
+            raise InstantModelsError(
+                f"Instant Models API nie zna zasobu {relative} (HTTP 404: {detail}). "
+                "Manifest na serwerze nie zawiera tego pliku lub pakietu."
+            )
+        if not response.ok:
+            raise InstantModelsError(
+                f"Instant Models API zwróciło błąd HTTP {response.status_code} dla {relative}: {detail}"
+            )
         try:
-            response.raise_for_status()
             payload = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            raise InstantModelsError("Instant Models API zwróciło nieprawidłową odpowiedź") from exc
+        except ValueError as exc:
+            raise InstantModelsError(
+                f"Instant Models API zwróciło nieprawidłową odpowiedź dla {relative} (HTTP {response.status_code}, {detail})"
+            ) from exc
         if not isinstance(payload, dict):
-            raise InstantModelsError("Instant Models API zwróciło nieprawidłową odpowiedź")
+            raise InstantModelsError(f"Instant Models API zwróciło nieprawidłową odpowiedź dla {relative}")
         return payload
 
     def manifest(self) -> InstantManifest:
