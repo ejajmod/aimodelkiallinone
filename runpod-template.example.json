@@ -1,6 +1,6 @@
 {
   "name": "AIMODELKI ALL IN ONE",
-  "imageName": "aimodelki/aimodelki-allin1:1.5.0",
+  "imageName": "aimodelki/aimodelki-allin1:1.6.0",
   "category": "NVIDIA",
   "containerDiskInGb": 50,
   "volumeInGb": 250,
@@ -14,13 +14,12 @@
   "dockerStartCmd": [],
   "env": {
     "LAUNCHER_UPDATE_ENABLED": "0",
-    "COMFYUI_BUNDLE_URL": "https://pub-746aa51431cf4b7eac8a9cf5e44fbf58.r2.dev/runtime/aimodelki-comfyui-1.4.6-cu128.tar.gz",
-    "COMFYUI_BUNDLE_VERSION": "1.4.6-cu128",
-    "COMFYUI_BUNDLE_SHA256": "15195e617e082d19e5fc07f3709d7402190cfe601afa32ab28f0aac7516108b0",
+    "AIMODELKI_DOWNLOAD_PARALLEL_FILES": "4",
+    "AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE": "16",
     "INSTANT_MODELS_DOWNLOAD_CONNECTIONS": "64",
     "INSTANT_MODELS_DOWNLOAD_SEGMENT_MB": "64"
   },
   "isPublic": false,
   "isServerless": false,
-  "readme": "# AIMODELKI ALL IN ONE\n\nOpen port 3000 for the installer, 8188 for ComfyUI and 8888 for JupyterLab. The image stores models and custom nodes under /workspace. No external workflow JSON files are bundled."
+  "readme": "# AIMODELKI ALL IN ONE\n\nOpen port 3000 for the installer, 8188 for ComfyUI and 8888 for JupyterLab. The image runs CUDA 13.0 and needs an NVIDIA driver 580 or newer (filter CUDA 13.0 when deploying); use the 1.6.0-cu128 tag for drivers 570-579. Models and custom nodes are stored under /workspace. No external workflow JSON files are bundled."
 }

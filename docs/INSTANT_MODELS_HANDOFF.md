@@ -9,7 +9,7 @@ Instant Models jest płatnym, opcjonalnym źródłem modeli dla launchera AIMODE
 - tylko jeden pakiet może być instalowany jednocześnie;
 - Image Edit pobiera gated model FLUX z R2, natomiast bez Instant Models wymaga jego ręcznego dodania.
 
-Aktualny obraz: `aimodelki/aimodelki-allin1:1.3.5`.
+Aktualny obraz: `aimodelki/aimodelki-allin1:1.6.0` (CUDA 13.0; wariant `1.6.0-cu128` dla sterowników 570–579).
 
 ## 2. Przepływ techniczny
 
@@ -20,7 +20,7 @@ Aktualny obraz: `aimodelki/aimodelki-allin1:1.3.5`.
 4. Kliknięcie karty katalogu wybiera pakiet. Launcher ponownie autoryzuje token i wymaga kompletnego manifestu R2 dla całego pakietu — nie miesza R2 ze źródłami publicznymi.
 5. Dla każdego pliku launcher pobiera krótkotrwały URL:
    `POST /api/v1/instant-models/files/{fileId}/download-url`.
-6. Backend kontenera pobiera plik bez udziału przeglądarki. Obsługuje HTTP Range, do 64 segmentów równolegle, retry, `.part`, wznowienie, SHA-256 i atomową zmianę nazwy.
+6. Backend kontenera pobiera pliki bez udziału przeglądarki: aria2c, do 4 plików jednocześnie i do 16 połączeń na plik, z retry, `.part`, wznowieniem, weryfikacją SHA-256 i atomową zmianą nazwy. Presigned URL trafia do aria2c przez stdin, więc nie widać go na liście procesów. Wbudowany downloader Pythona (HTTP Range, do 64 segmentów) pozostaje zapasowy.
 7. Poprawny istniejący plik jest pomijany. Po anulowaniu przycisk **Wznów pobieranie** kontynuuje zapisane segmenty.
 
 R2 jest prywatne. Credentiale R2 istnieją wyłącznie w centralnym serwisie. Launcher otrzymuje tylko presigned URL o krótkim TTL.

@@ -1,21 +1,43 @@
 from __future__ import annotations
 
+import hashlib
 import os
+import re
+import shutil
 import signal
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import zipfile
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+import requests
 
 from .catalog import DownloadSpec, NodeSpec, WorkflowSpec
 from .download_engine import DownloadCancelled, DownloadEngine, DownloadError, DownloadRequest
 from .instant_models import InstantDownloadSource
 from .operations import OperationBusy, OperationCoordinator
 from .state import StateStore
+
+
+NODE_MARKER = ".aimodelki-node-revision"
+# Written by the 1.4 and 1.5 images, which baked or installed nodes the same way.
+LEGACY_NODE_MARKERS = (".aimodelki-baked-revision",)
+DEFAULT_REQUIREMENT_EXCLUDES = Path(__file__).resolve().parents[1] / "docker" / "node-requirements-exclude.txt"
+NODE_CONSTRAINTS = (
+    Path("/opt/aimodelki-node-constraints.txt"),
+    Path("/opt/comfyui-runtime-constraints.txt"),
+)
+DEFAULT_NODE_ARCHIVE_BASE_URL = "https://pub-746aa51431cf4b7eac8a9cf5e44fbf58.r2.dev/custom-nodes"
+
+
+def normalized_requirement(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).strip().lower()
 
 
 class InstallCancelled(RuntimeError):
@@ -50,7 +72,15 @@ class Installer:
         self._cancel = threading.Event()
         self._guard = threading.Lock()
         self.coordinator = coordinator or OperationCoordinator()
-        self.download_engine = DownloadEngine(self.comfyui_root)
+        downloader = os.getenv("AIMODELKI_DOWNLOADER", "auto").strip().lower()
+        aria2c = None if downloader == "python" else shutil.which("aria2c")
+        connections_per_file = self._env_int("AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE", 16, 1, 16)
+        self.parallel_files = self._env_int("AIMODELKI_DOWNLOAD_PARALLEL_FILES", 4, 1, 8)
+        self.download_engine = DownloadEngine(
+            self.comfyui_root,
+            aria2c=aria2c,
+            aria2_connections=connections_per_file,
+        )
         connections = self._env_int("INSTANT_MODELS_DOWNLOAD_CONNECTIONS", 64, 1, 64)
         segment_mb = self._env_int("INSTANT_MODELS_DOWNLOAD_SEGMENT_MB", 64, 8, 1024)
         segment_size = segment_mb * 1024 * 1024
@@ -59,6 +89,8 @@ class Installer:
             parallelism=connections,
             segment_size=segment_size,
             parallel_threshold=segment_size * 2,
+            aria2c=aria2c,
+            aria2_connections=connections_per_file,
         )
 
     @staticmethod
@@ -84,6 +116,12 @@ class Installer:
         )
         return next((candidate for candidate in candidates if candidate.is_file()), Path(sys.executable))
 
+    def _connection_count(self, instant: bool) -> int:
+        engine = self.instant_download_engine if instant else self.download_engine
+        if engine.aria2c:
+            return self.parallel_files * engine.aria2_connections
+        return engine.parallelism
+
     def start(
         self,
         workflow: WorkflowSpec,
@@ -105,6 +143,7 @@ class Installer:
             self._cancel.clear()
             try:
                 downloads, pending_manual = self._resolve_downloads(workflow, instant_source)
+                instant = any(item.instant for item in downloads)
                 self.store.update(
                     status="queued",
                     workflow_id=workflow.id,
@@ -116,15 +155,11 @@ class Installer:
                     downloaded_bytes=0,
                     total_bytes=sum(item.spec.size_bytes or 0 for item in downloads),
                     speed_bytes_per_second=0,
-                    download_mode="instant" if any(item.instant for item in downloads) else "standard",
-                    download_connections=self.instant_download_engine.parallelism if any(item.instant for item in downloads) else 1,
+                    download_mode="instant" if instant else "standard",
+                    download_connections=self._connection_count(instant),
                     manual_files_pending=self._manual_payload(pending_manual),
                     error=None,
-                    message=(
-                        "Przygotowuję szybkie pobieranie…"
-                        if any(item.instant for item in downloads)
-                        else "Przygotowuję instalację…"
-                    ),
+                    message="Przygotowuję szybkie pobieranie…" if instant else "Przygotowuję instalację…",
                 )
                 self._thread = threading.Thread(
                     target=self._run,
@@ -225,21 +260,7 @@ class Installer:
         try:
             self.comfyui_root.mkdir(parents=True, exist_ok=True)
             total_items = len(downloads) + len(workflow.custom_nodes)
-            total_expected = sum(item.spec.size_bytes or 0 for item in downloads)
-            completed_expected = 0
-
-            for index, resolved in enumerate(downloads, start=1):
-                self._check_cancelled()
-                item = resolved.spec
-                self.store.update(
-                    status="downloading",
-                    current_item=item.name,
-                    current_index=index,
-                    total_items=total_items,
-                    message=f"Pobieranie: {item.name}",
-                )
-                actual_size = self._download(resolved, completed_expected, total_expected, index, total_items)
-                completed_expected += item.size_bytes or actual_size
+            self._download_many(downloads, total_items)
 
             node_base = len(downloads)
             for offset, node in enumerate(workflow.custom_nodes, start=1):
@@ -292,16 +313,77 @@ class Installer:
         finally:
             self.coordinator.release("workflow")
 
-    def _download(
+    def _download_many(self, downloads: list[ResolvedDownload], total_items: int) -> None:
+        """Download up to ``parallel_files`` files at once with one aggregate progress."""
+        if not downloads:
+            return
+        total_expected = sum(item.spec.size_bytes or 0 for item in downloads)
+        guard = threading.Lock()
+        abort = threading.Event()
+        done: dict[int, int] = {}
+        speeds: dict[int, int] = {}
+        active: dict[int, str] = {}
+        finished = 0
+
+        def publish() -> None:
+            names = list(active.values())
+            label = f"{names[0]} (+{len(names) - 1})" if len(names) > 1 else (names[0] if names else None)
+            self._publish_aggregate(
+                sum(done.values()), total_expected, sum(speeds.values()), finished, total_items, label
+            )
+
+        def run(index: int, resolved: ResolvedDownload) -> None:
+            nonlocal finished
+            spec = resolved.spec
+            with guard:
+                active[index] = spec.name
+                publish()
+
+            def report(current: int, expected: int, speed: int) -> None:
+                with guard:
+                    done[index] = min(current, spec.size_bytes or expected or current)
+                    speeds[index] = speed
+                    publish()
+
+            try:
+                size = self._download_one(
+                    resolved,
+                    report,
+                    cancelled=lambda: self._cancel.is_set() or abort.is_set(),
+                )
+            finally:
+                with guard:
+                    active.pop(index, None)
+                    speeds.pop(index, None)
+            with guard:
+                done[index] = spec.size_bytes or size
+                finished += 1
+                publish()
+
+        with ThreadPoolExecutor(max_workers=min(self.parallel_files, len(downloads))) as executor:
+            futures = [executor.submit(run, index, resolved) for index, resolved in enumerate(downloads)]
+            completed, _ = wait(futures, return_when=FIRST_EXCEPTION)
+            if any(future.exception() for future in completed):
+                # Stop the other transfers; their .part files stay resumable.
+                abort.set()
+                for future in futures:
+                    future.cancel()
+
+        errors = [future.exception() for future in futures if not future.cancelled() and future.exception()]
+        if self._cancel.is_set():
+            raise InstallCancelled()
+        failures = [error for error in errors if not isinstance(error, InstallCancelled)]
+        if failures:
+            raise failures[0]
+        if errors:
+            raise errors[0]
+
+    def _download_one(
         self,
-        resolved: ResolvedDownload | DownloadSpec,
-        completed_before: int,
-        total_expected: int,
-        item_index: int,
-        total_items: int,
+        resolved: ResolvedDownload,
+        report: Callable[[int, int, int], None],
+        cancelled: Callable[[], bool],
     ) -> int:
-        if isinstance(resolved, DownloadSpec):
-            resolved = ResolvedDownload(resolved, lambda url=resolved.url: url)
         item = resolved.spec
         request = DownloadRequest(
             name=item.name,
@@ -311,118 +393,269 @@ class Installer:
             url_provider=resolved.url_provider,
             headers=item.headers,
         )
-
-        def publish(current: int, expected: int, speed: int) -> None:
-            aggregate_total = total_expected or expected
-            aggregate_done = completed_before + min(current, expected or current)
-            self._publish_download_progress(
-                item,
-                aggregate_done,
-                aggregate_total,
-                current,
-                speed,
-                item_index,
-                total_items,
-            )
-
+        engine = self.instant_download_engine if resolved.instant else self.download_engine
         try:
-            engine = self.instant_download_engine if resolved.instant else self.download_engine
-            size = engine.download(
-                request,
-                cancelled=self._cancel.is_set,
-                progress=publish,
-            )
+            size = engine.download(request, cancelled=cancelled, progress=report)
         except DownloadCancelled as exc:
             raise InstallCancelled() from exc
         except DownloadError as exc:
             raise InstallError(str(exc)) from exc
 
-        target = self._target(item.destination)
-
         if item.extract:
             self.store.update(message=f"Rozpakowywanie: {item.name}")
+            target = self._target(item.destination)
             self._extract(target, target.parent, item.extract)
+        return size
 
-        self._publish_download_progress(
-            item,
+    def _download(
+        self,
+        resolved: ResolvedDownload | DownloadSpec,
+        completed_before: int,
+        total_expected: int,
+        item_index: int,
+        total_items: int,
+    ) -> int:
+        """Download a single file with its own progress; used outside the package flow."""
+        if isinstance(resolved, DownloadSpec):
+            resolved = ResolvedDownload(resolved, lambda url=resolved.url: url)
+        item = resolved.spec
+
+        def report(current: int, expected: int, speed: int) -> None:
+            self._publish_aggregate(
+                completed_before + min(current, expected or current),
+                total_expected or expected,
+                speed,
+                item_index - 1,
+                total_items,
+                item.name,
+            )
+
+        size = self._download_one(resolved, report, self._cancel.is_set)
+        self._publish_aggregate(
             completed_before + (item.size_bytes or size),
             total_expected or (item.size_bytes or size),
-            size,
             0,
             item_index,
             total_items,
+            None,
         )
         return size
 
-    def _publish_download_progress(
+    def _publish_aggregate(
         self,
-        item: DownloadSpec,
-        aggregate_done: int,
-        aggregate_total: int,
-        current_done: int,
+        done: int,
+        total: int,
         speed: int,
-        item_index: int,
+        finished: int,
         total_items: int,
+        label: str | None,
     ) -> None:
-        if aggregate_total:
-            progress = min(90, round(aggregate_done / aggregate_total * 90))
+        if total:
+            progress = min(90, round(done / total * 90))
         else:
-            progress = round((item_index - 1) / max(total_items, 1) * 90)
-        self.store.update(
-            progress=progress,
-            downloaded_bytes=aggregate_done,
-            total_bytes=aggregate_total,
-            current_downloaded_bytes=current_done,
-            current_total_bytes=item.size_bytes,
-            speed_bytes_per_second=speed,
-        )
+            progress = round(finished / max(total_items, 1) * 90)
+        changes: dict[str, object] = {
+            "status": "downloading",
+            "progress": progress,
+            "downloaded_bytes": done,
+            "total_bytes": total,
+            "speed_bytes_per_second": speed,
+            "current_item": label,
+            "current_index": finished,
+            "total_items": total_items,
+        }
+        # Keep the "stopping" message visible once the user has cancelled.
+        if label and not self._cancel.is_set():
+            changes["message"] = f"Pobieranie: {label}"
+        self.store.update(**changes)
 
-    def _install_node(self, node: NodeSpec) -> None:
-        destination = self._target(node.directory)
-        if destination.exists() and not (destination / ".git").exists():
-            raise InstallError(f"Katalog {node.directory} istnieje, ale nie jest repozytorium git")
-        baked_revision = destination / ".aimodelki-baked-revision"
-        current_revision = None
-        if destination.exists() and baked_revision.is_file():
-            current_revision = subprocess.run(
+    @staticmethod
+    def _marker_revision(destination: Path) -> str | None:
+        for name in (NODE_MARKER, *LEGACY_NODE_MARKERS):
+            try:
+                value = (destination / name).read_text(encoding="ascii").strip().lower()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if value:
+                return value
+        return None
+
+    def node_revision(self, destination: Path) -> str | None:
+        """Checked-out revision of a node directory, without starting git when possible."""
+        git_dir = destination / ".git"
+        if git_dir.is_dir():
+            try:
+                head = (git_dir / "HEAD").read_text(encoding="ascii").strip()
+            except (OSError, UnicodeDecodeError):
+                return None
+            # A branch ("ref: refs/heads/main") is not a pinned catalog revision.
+            return head.lower() if re.fullmatch(r"[0-9a-fA-F]{40}", head) else None
+        if git_dir.exists():
+            result = subprocess.run(
                 ["git", "-C", str(destination), "rev-parse", "HEAD"],
                 capture_output=True,
                 text=True,
                 check=False,
             )
-        preinstalled = (
-            current_revision is not None
-            and current_revision.returncode == 0
-            and current_revision.stdout.strip() == node.revision
-            and baked_revision.read_text(encoding="ascii").strip() == node.revision
-        )
-        if not preinstalled:
-            if not destination.exists():
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                self._run_command(["git", "clone", "--filter=blob:none", node.repository, str(destination)])
-            self._run_command(["git", "-C", str(destination), "fetch", "--depth", "1", "origin", node.revision])
-            self._run_command(["git", "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"])
+            return result.stdout.strip().lower() if result.returncode == 0 else None
+        # Installed from an archive: the marker is the only record of the revision.
+        return self._marker_revision(destination)
+
+    def node_ready(self, node: NodeSpec) -> bool:
+        try:
+            destination = self._target(node.directory)
+        except InstallError:
+            return False
+        revision = node.revision.lower()
+        return self._marker_revision(destination) == revision and self.node_revision(destination) == revision
+
+    def workflow_nodes_ready(self, workflow: WorkflowSpec) -> bool:
+        return all(self.node_ready(node) for node in workflow.custom_nodes)
+
+    def _install_node(self, node: NodeSpec) -> None:
+        destination = self._target(node.directory)
+        # The marker is written only after pip and the install script succeeded.
+        if self.node_ready(node):
+            return
+        if not self._install_node_archive(node, destination):
+            self._install_node_git(node, destination)
 
         python = str(self._comfy_python())
         requirements = destination / "requirements.txt"
-        if not preinstalled and node.install_requirements and requirements.exists():
-            command = [python, "-m", "pip", "install"]
-            if node.upgrade_requirements:
-                command.append("--upgrade")
-            command.extend(["-r", str(requirements)])
-            constraint = Path("/opt/comfyui-runtime-constraints.txt")
-            if constraint.exists():
-                command.extend(["-c", str(constraint)])
-            self._run_command(command, cwd=destination)
+        if node.install_requirements and requirements.is_file():
+            filtered = self._filtered_requirements(requirements)
+            if filtered is not None:
+                try:
+                    command = [python, "-m", "pip", "install"]
+                    if node.upgrade_requirements:
+                        command.append("--upgrade")
+                    command.extend(["-r", str(filtered)])
+                    for constraint in NODE_CONSTRAINTS:
+                        if constraint.is_file():
+                            command.extend(["-c", str(constraint)])
+                    self._run_command(command, cwd=destination)
+                finally:
+                    filtered.unlink(missing_ok=True)
 
-        if node.install_script and not preinstalled:
+        if node.install_script:
             script = (destination / node.install_script).resolve()
             if destination not in script.parents or not script.is_file():
                 raise InstallError(f"Brak bezpiecznego skryptu instalacyjnego: {node.install_script}")
             self._run_command([python, str(script)], cwd=destination)
 
-        if not preinstalled:
-            baked_revision.write_text(node.revision + "\n", encoding="ascii")
+        (destination / NODE_MARKER).write_text(node.revision.lower() + "\n", encoding="ascii")
+
+    def _node_archive_url(self, node: NodeSpec) -> str | None:
+        base = os.getenv("AIMODELKI_NODE_ARCHIVE_BASE_URL", DEFAULT_NODE_ARCHIVE_BASE_URL).strip().rstrip("/")
+        if not base or not node.archive_sha256:
+            return None
+        return f"{base}/{Path(node.directory).name}-{node.revision.lower()}.tar.gz"
+
+    def _install_node_archive(self, node: NodeSpec, destination: Path) -> bool:
+        """Install a node from its pinned R2 archive. False means: use git instead."""
+        url = self._node_archive_url(node)
+        # A git checkout keeps its own history, and an unknown directory is not ours to replace.
+        if not url or (destination / ".git").exists():
+            return False
+        if destination.exists() and self._marker_revision(destination) is None:
+            return False
+
+        cache = self.store.state_dir / "node-archives"
+        archive = cache / f"{destination.name}-{node.revision.lower()}.tar.gz"
+        staging = destination.parent / f".{destination.name}.staging"
+        previous = destination.parent / f".{destination.name}.previous"
+        self.store.update(message=f"Pobieranie węzła: {node.name}")
+        try:
+            cache.mkdir(parents=True, exist_ok=True)
+            digest = hashlib.sha256()
+            with requests.get(url, stream=True, timeout=(15, 120)) as response:
+                response.raise_for_status()
+                with archive.open("wb") as handle:
+                    for chunk in response.iter_content(1024 * 1024):
+                        self._check_cancelled()
+                        handle.write(chunk)
+                        digest.update(chunk)
+            if digest.hexdigest() != node.archive_sha256:
+                raise InstallError(f"Suma SHA-256 archiwum węzła {node.name} nie zgadza się")
+            shutil.rmtree(staging, ignore_errors=True)
+            staging.mkdir(parents=True)
+            self._extract(archive, staging, "tar")
+            if destination.exists():
+                shutil.rmtree(previous, ignore_errors=True)
+                destination.replace(previous)
+            staging.replace(destination)
+            shutil.rmtree(previous, ignore_errors=True)
+            return True
+        except InstallCancelled:
+            raise
+        except (requests.RequestException, OSError, tarfile.TarError, InstallError) as exc:
+            if isinstance(exc, requests.HTTPError) and exc.response is not None:
+                detail = f"HTTP {exc.response.status_code}"
+            else:
+                detail = type(exc).__name__
+            if previous.exists() and not destination.exists():
+                previous.replace(destination)
+            self.store.update(message=f"Archiwum węzła {node.name} niedostępne ({detail}); pobieram z GitHub…")
+            return False
+        finally:
+            archive.unlink(missing_ok=True)
+            shutil.rmtree(staging, ignore_errors=True)
+
+    def _install_node_git(self, node: NodeSpec, destination: Path) -> None:
+        git_dir = destination / ".git"
+        force = False
+        if destination.exists() and not git_dir.exists():
+            if self._marker_revision(destination) is None:
+                raise InstallError(f"Katalog {node.directory} istnieje, ale nie jest repozytorium git")
+            # Installed from an archive earlier: the pinned checkout replaces its files.
+            force = True
+        destination.mkdir(parents=True, exist_ok=True)
+        if not git_dir.exists():
+            self._run_command(["git", "-C", str(destination), "init", "-q"])
+            self._run_command(["git", "-C", str(destination), "remote", "add", "origin", node.repository])
+        # Only the pinned commit is fetched: no history, no tags.
+        self._run_command(
+            ["git", "-C", str(destination), "fetch", "--depth", "1", "--no-tags", node.repository, node.revision]
+        )
+        checkout = ["git", "-C", str(destination), "checkout", "--detach"]
+        if force:
+            checkout.append("--force")
+        checkout.append("FETCH_HEAD")
+        self._run_command(checkout)
+
+    def _requirement_excludes(self) -> set[str]:
+        path = Path(os.getenv("AIMODELKI_NODE_REQUIREMENTS_EXCLUDE", str(DEFAULT_REQUIREMENT_EXCLUDES)))
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return set()
+        return {
+            normalized_requirement(line.split("#", 1)[0])
+            for line in lines
+            if line.split("#", 1)[0].strip()
+        }
+
+    def _filtered_requirements(self, requirements: Path) -> Path | None:
+        """Copy of a node's requirements without packages the image manages itself."""
+        excludes = self._requirement_excludes()
+        kept: list[str] = []
+        for raw in requirements.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.split(" #", 1)[0].strip()
+            if not line or line.startswith("#"):
+                continue
+            # pip options, nested files and VCS or URL requirements are not reproducible.
+            if line.startswith("-") or "://" in line or line.startswith(("git+", "file:")):
+                continue
+            name = re.split(r"[\s<>=!~;\[@(]", line, maxsplit=1)[0]
+            if not name or normalized_requirement(name) in excludes:
+                continue
+            kept.append(line)
+        if not kept:
+            return None
+        handle, name = tempfile.mkstemp(prefix="node-requirements-", suffix=".txt", dir=self.store.state_dir)
+        with os.fdopen(handle, "w", encoding="utf-8") as file:
+            file.write("\n".join(kept) + "\n")
+        return Path(name)
 
     def _run_command(self, command: list[str], cwd: Path | None = None) -> None:
         process = subprocess.Popen(

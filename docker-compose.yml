@@ -2,7 +2,7 @@ services:
   aimodelki-allin1:
     build:
       context: .
-    image: aimodelki-allin1:1.5.0
+    image: aimodelki-allin1:1.6.0
     container_name: aimodelki-allin1
     ports:
       - "3000:3000"
@@ -23,9 +23,10 @@ services:
       INSTANT_MODELS_DOWNLOAD_CONNECTIONS: "${INSTANT_MODELS_DOWNLOAD_CONNECTIONS:-64}"
       INSTANT_MODELS_DOWNLOAD_SEGMENT_MB: "${INSTANT_MODELS_DOWNLOAD_SEGMENT_MB:-64}"
       INSTANT_MODELS_DISK_RESERVE_GB: "${INSTANT_MODELS_DISK_RESERVE_GB:-5}"
-      COMFYUI_BUNDLE_URL: "${COMFYUI_BUNDLE_URL:-https://pub-746aa51431cf4b7eac8a9cf5e44fbf58.r2.dev/runtime/aimodelki-comfyui-1.4.6-cu128.tar.gz}"
-      COMFYUI_BUNDLE_VERSION: "${COMFYUI_BUNDLE_VERSION:-1.4.6-cu128}"
-      COMFYUI_BUNDLE_SHA256: "${COMFYUI_BUNDLE_SHA256:-15195e617e082d19e5fc07f3709d7402190cfe601afa32ab28f0aac7516108b0}"
+      AIMODELKI_DOWNLOADER: "${AIMODELKI_DOWNLOADER:-auto}"
+      AIMODELKI_DOWNLOAD_PARALLEL_FILES: "${AIMODELKI_DOWNLOAD_PARALLEL_FILES:-4}"
+      AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE: "${AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE:-16}"
+      AIMODELKI_NODE_ARCHIVE_BASE_URL: "${AIMODELKI_NODE_ARCHIVE_BASE_URL:-https://pub-746aa51431cf4b7eac8a9cf5e44fbf58.r2.dev/custom-nodes}"
       HF_TOKEN: "${HF_TOKEN:-}"
     restart: unless-stopped
     volumes:

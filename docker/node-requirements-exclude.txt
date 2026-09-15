@@ -1,0 +1,13 @@
+# Requirement names the launcher removes from custom-node requirements before running pip.
+# One distribution name per line; comparison ignores case, "-", "_" and ".".
+
+# Provided by the base image for its CUDA build.
+torch
+torchvision
+torchaudio
+
+# The CPU wheel overwrites the onnxruntime module installed by onnxruntime-gpu.
+onnxruntime
+
+# Compiles from source.
+dlib

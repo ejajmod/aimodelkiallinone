@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 import requests
+from requests.adapters import HTTPAdapter
 
 
 class DownloadCancelled(RuntimeError):
@@ -19,6 +22,16 @@ class DownloadCancelled(RuntimeError):
 
 class DownloadError(RuntimeError):
     pass
+
+
+URL_PATTERN = re.compile(r"https?://\S+")
+# aria2c exit status for "checksum validation failed".
+ARIA2_CHECKSUM_FAILED = 32
+
+
+def redact_urls(text: str) -> str:
+    """A presigned URL carries its signature in the query string, so none may reach a log."""
+    return URL_PATTERN.sub("<url>", text)
 
 
 @dataclass(frozen=True)
@@ -43,6 +56,8 @@ class DownloadEngine:
         parallelism: int = 1,
         segment_size: int = 64 * 1024 * 1024,
         parallel_threshold: int = 256 * 1024 * 1024,
+        aria2c: str | None = None,
+        aria2_connections: int = 16,
     ):
         self.root = root.resolve()
         self.attempts = attempts
@@ -50,6 +65,9 @@ class DownloadEngine:
         self.parallelism = max(1, min(int(parallelism), 64))
         self.segment_size = max(self.chunk_size, int(segment_size))
         self.parallel_threshold = max(self.segment_size, int(parallel_threshold))
+        self.aria2c = aria2c
+        self.aria2_connections = max(1, min(int(aria2_connections), 16))
+        self._local = threading.local()
 
     def target(self, relative: str) -> Path:
         normalized = relative.replace("\\", "/")
@@ -70,6 +88,34 @@ class DownloadEngine:
                 digest.update(chunk)
         return digest.hexdigest()
 
+    @staticmethod
+    def verified_marker(target: Path) -> Path:
+        return target.with_name(f".{target.name}.aimodelki-verified")
+
+    def _marker_matches(self, target: Path, expected_sha256: str) -> bool:
+        try:
+            stat = target.stat()
+            recorded = json.loads(self.verified_marker(target).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return (
+            isinstance(recorded, dict)
+            and recorded.get("sha256") == expected_sha256.lower()
+            and recorded.get("size") == stat.st_size
+            and recorded.get("mtime_ns") == stat.st_mtime_ns
+        )
+
+    def _write_verified_marker(self, target: Path, sha256: str) -> None:
+        try:
+            stat = target.stat()
+            self.verified_marker(target).write_text(
+                json.dumps({"sha256": sha256.lower(), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}),
+                encoding="utf-8",
+            )
+        except OSError:
+            # The marker only saves a later re-hash; the file itself is already verified.
+            pass
+
     def is_ready(
         self,
         target: Path,
@@ -81,7 +127,15 @@ class DownloadEngine:
             return False
         if expected_size and target.stat().st_size != expected_size:
             return False
-        return not expected_sha256 or self.sha256(target, cancelled).lower() == expected_sha256.lower()
+        if not expected_sha256:
+            return True
+        # A file verified earlier and untouched since (same size and mtime) is not read again.
+        if self._marker_matches(target, expected_sha256):
+            return True
+        if self.sha256(target, cancelled).lower() != expected_sha256.lower():
+            return False
+        self._write_verified_marker(target, expected_sha256)
+        return True
 
     def download(
         self,
@@ -99,16 +153,21 @@ class DownloadEngine:
 
         part = target.with_name(target.name + ".part")
         metadata = self._metadata_path(part)
+        control = self._aria2_control_path(part)
         if part.exists() and item.size_bytes and part.stat().st_size > item.size_bytes:
             part.unlink()
             metadata.unlink(missing_ok=True)
+            control.unlink(missing_ok=True)
 
         last_error: Exception | None = None
         for attempt in range(self.attempts):
             if cancelled():
                 raise DownloadCancelled()
             try:
-                if (
+                verified = False
+                if self._use_aria2(item, part):
+                    verified = self._transfer_aria2(item, part, cancelled, progress)
+                elif (
                     self.parallelism > 1
                     and item.size_bytes
                     and item.size_bytes >= self.parallel_threshold
@@ -121,12 +180,16 @@ class DownloadEngine:
                     raise DownloadError(
                         f"Niepełny plik {item.name}: {part.stat().st_size} z {item.size_bytes} bajtów"
                     )
-                if item.sha256 and self.sha256(part, cancelled).lower() != item.sha256.lower():
+                if item.sha256 and not verified and self.sha256(part, cancelled).lower() != item.sha256.lower():
                     part.unlink(missing_ok=True)
                     metadata.unlink(missing_ok=True)
+                    control.unlink(missing_ok=True)
                     raise DownloadError(f"Suma SHA-256 nie zgadza się dla {item.name}")
                 part.replace(target)
                 metadata.unlink(missing_ok=True)
+                control.unlink(missing_ok=True)
+                if item.sha256:
+                    self._write_verified_marker(target, item.sha256)
                 return target.stat().st_size
             except DownloadCancelled:
                 raise
@@ -143,12 +206,148 @@ class DownloadEngine:
             # A requests exception may contain the full presigned URL and query signature.
             reason = type(last_error).__name__
         else:
-            reason = str(last_error)
+            reason = redact_urls(str(last_error))
         raise DownloadError(f"Nie udało się pobrać {item.name}: {reason}")
 
     @staticmethod
     def _metadata_path(part: Path) -> Path:
         return part.with_name(part.name + ".segments.json")
+
+    @staticmethod
+    def _aria2_control_path(part: Path) -> Path:
+        return part.with_name(part.name + ".aria2")
+
+    def _use_aria2(self, item: DownloadRequest, part: Path) -> bool:
+        # Segments written by the Python engine can only be finished by that engine.
+        return bool(self.aria2c and item.size_bytes and not self._metadata_path(part).exists())
+
+    def aria2_invocation(self, item: DownloadRequest, part: Path, url: str) -> tuple[list[str], str]:
+        """Build the aria2c command line and its input file.
+
+        The URL and the request headers travel through stdin, never argv, so a presigned
+        signature cannot show up in the process list. The target directory and file name
+        belong in the input file too: aria2c ignores a global --out for input-file entries
+        and would name the file after the redirect target instead.
+        """
+        if not self.aria2c:
+            raise DownloadError("aria2c nie jest dostępny")
+        connections = str(self.aria2_connections)
+        command = [
+            self.aria2c,
+            "--no-conf=true",
+            "--input-file=-",
+            f"--max-connection-per-server={connections}",
+            f"--split={connections}",
+            # Small pieces let idle connections take over the tail of a slow one.
+            "--min-split-size=4M",
+            "--continue=true",
+            "--allow-overwrite=true",
+            "--auto-file-renaming=false",
+            # Pre-allocation would make the progress reading jump to 100% at once.
+            "--file-allocation=none",
+            "--disk-cache=64M",
+            "--max-tries=5",
+            "--retry-wait=3",
+            "--connect-timeout=20",
+            "--timeout=60",
+            "--auto-save-interval=10",
+            "--summary-interval=0",
+            "--console-log-level=warn",
+            "--download-result=hide",
+            "--show-console-readout=false",
+        ]
+        if item.sha256:
+            command.append(f"--checksum=sha-256={item.sha256.lower()}")
+        lines = [url, f"  dir={part.parent}", f"  out={part.name}"]
+        for key, value in item.headers.items():
+            if not value:
+                continue
+            if any(character in f"{key}{value}" for character in "\r\n"):
+                raise DownloadError(f"Nieprawidłowy nagłówek żądania dla {item.name}")
+            lines.append(f"  header={key}: {value}")
+        return command, "\n".join(lines) + "\n"
+
+    @staticmethod
+    def written_bytes(path: Path, cap: int = 0) -> int:
+        """Bytes actually stored in a sparse file that is written at many offsets at once."""
+        try:
+            stat = path.stat()
+        except OSError:
+            return 0
+        blocks = getattr(stat, "st_blocks", None)
+        written = blocks * 512 if blocks is not None else stat.st_size
+        return min(written, cap) if cap else written
+
+    @staticmethod
+    def _stop_process(process: subprocess.Popen) -> None:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+    def _transfer_aria2(
+        self,
+        item: DownloadRequest,
+        part: Path,
+        cancelled: Callable[[], bool],
+        progress: Callable[[int, int, int], None],
+    ) -> bool:
+        """Download with aria2c. Returns True when aria2c has verified the SHA-256 itself."""
+        expected = int(item.size_bytes or 0)
+        command, input_file = self.aria2_invocation(item, part, item.url_provider())
+        part.parent.mkdir(parents=True, exist_ok=True)
+        started_bytes = self.written_bytes(part, expected)
+        progress(started_bytes, expected, 0)
+
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        output: list[str] = []
+        reader = threading.Thread(target=lambda: output.append(process.stdout.read()), daemon=True)
+        reader.start()
+        try:
+            process.stdin.write(input_file)
+            process.stdin.close()
+        except OSError:
+            # aria2c exited before reading its input; the exit status below explains why.
+            pass
+
+        highest = started_bytes
+        window_started = time.monotonic()
+        window_bytes = started_bytes
+        speed = 0
+        while process.poll() is None:
+            if cancelled():
+                self._stop_process(process)
+                raise DownloadCancelled()
+            time.sleep(0.5)
+            # ext4 delays allocation, so the reading can briefly go down; never show that.
+            highest = max(highest, self.written_bytes(part, expected))
+            now = time.monotonic()
+            if now - window_started >= 1.0:
+                sample = int((highest - window_bytes) / (now - window_started))
+                speed = sample if not speed else int(speed * 0.6 + sample * 0.4)
+                window_started, window_bytes = now, highest
+            progress(highest, expected, speed)
+        reader.join(timeout=5)
+
+        if process.returncode == ARIA2_CHECKSUM_FAILED:
+            part.unlink(missing_ok=True)
+            self._aria2_control_path(part).unlink(missing_ok=True)
+            raise DownloadError(f"Suma SHA-256 nie zgadza się dla {item.name}")
+        if process.returncode:
+            detail = redact_urls("".join(output).strip())[-300:]
+            raise DownloadError(f"aria2c zakończył pracę z kodem {process.returncode}. {detail}".strip())
+        progress(expected, expected, 0)
+        return bool(item.sha256)
 
     def partial_size(self, target: Path, expected_size: int) -> int:
         part = target.with_name(target.name + ".part")
@@ -169,6 +368,17 @@ class DownloadEngine:
             )
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return 0
+
+    def _session(self) -> requests.Session:
+        """One keep-alive session per worker thread, so segments reuse TCP and TLS."""
+        session = getattr(self._local, "session", None)
+        if session is None:
+            session = requests.Session()
+            adapter = HTTPAdapter(pool_connections=1, pool_maxsize=2, max_retries=0)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+            self._local.session = session
+        return session
 
     def _transfer_parallel(
         self,
@@ -263,7 +473,7 @@ class DownloadEngine:
             end = min(expected - 1, start + self.segment_size - 1)
             request_headers = dict(headers)
             request_headers["Range"] = f"bytes={start}-{end}"
-            with requests.get(url, headers=request_headers, stream=True, timeout=(20, 120)) as response:
+            with self._session().get(url, headers=request_headers, stream=True, timeout=(20, 120)) as response:
                 if response.status_code in self.RETRYABLE_STATUS or response.status_code in {401, 403}:
                     raise requests.HTTPError(f"HTTP {response.status_code}", response=response)
                 response.raise_for_status()

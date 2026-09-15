@@ -39,6 +39,7 @@ class NodeSpec:
     install_requirements: bool = True
     upgrade_requirements: bool = False
     install_script: str | None = None
+    archive_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,9 @@ def parse_catalog(raw: dict[str, Any]) -> list[WorkflowSpec]:
 
     workflows: list[WorkflowSpec] = []
     seen_ids: set[str] = set()
+    # Every package installs into one shared custom_nodes tree, so a directory must
+    # resolve to the same repository and revision in all of them.
+    node_pins: dict[str, tuple[str, str]] = {}
     for item in raw["workflows"]:
         workflow_id = str(item.get("id", ""))
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,63}", workflow_id):
@@ -171,12 +175,21 @@ def parse_catalog(raw: dict[str, Any]) -> list[WorkflowSpec]:
             if not revision:
                 raise CatalogError(f"{label}.revision is required for reproducibility")
             install_script = node.get("install_script")
+            archive_sha256 = node.get("archive_sha256")
+            if archive_sha256 and not re.fullmatch(r"[0-9a-fA-F]{64}", str(archive_sha256)):
+                raise CatalogError(f"{label}.archive_sha256 must contain 64 hex characters")
+            directory = _safe_relative_path(str(node.get("directory", "")), f"{label}.directory")
+            pin = (repository.rstrip("/").removesuffix(".git").lower(), revision.lower())
+            if node_pins.setdefault(directory, pin) != pin:
+                raise CatalogError(
+                    f"{label}: {directory} is pinned to a different repository or revision in another workflow"
+                )
             nodes.append(
                 NodeSpec(
                     name=str(node.get("name") or "Custom node"),
                     repository=repository,
                     revision=revision,
-                    directory=_safe_relative_path(str(node.get("directory", "")), f"{label}.directory"),
+                    directory=directory,
                     install_requirements=bool(node.get("install_requirements", True)),
                     upgrade_requirements=bool(node.get("upgrade_requirements", False)),
                     install_script=(
@@ -184,6 +197,7 @@ def parse_catalog(raw: dict[str, Any]) -> list[WorkflowSpec]:
                         if install_script
                         else None
                     ),
+                    archive_sha256=str(archive_sha256).lower() if archive_sha256 else None,
                 )
             )
 

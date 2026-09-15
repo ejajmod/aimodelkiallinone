@@ -86,7 +86,7 @@
         {
           "name": "rgthree-comfy",
           "repository": "https://github.com/rgthree/rgthree-comfy.git",
-          "revision": "27b4f4cdcf3b127c29d5d8135ac1536ecbd4c383",
+          "revision": "6b76ee6f2c5a007710b5a16f97c94330d6ecc871",
           "directory": "custom_nodes/rgthree-comfy",
           "install_requirements": true
         }
@@ -205,7 +205,7 @@
         {
           "name": "rgthree-comfy",
           "repository": "https://github.com/rgthree/rgthree-comfy.git",
-          "revision": "8ff50e4521881eca1fe26aec9615fc9362474931",
+          "revision": "6b76ee6f2c5a007710b5a16f97c94330d6ecc871",
           "directory": "custom_nodes/rgthree-comfy",
           "install_requirements": true
         },
@@ -371,7 +371,7 @@
         {
           "name": "ComfyUI Video Helper Suite",
           "repository": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
-          "revision": "0edce8ef7ce173ac97a3ed3d6f4636029d1a4530",
+          "revision": "4ee72c065db22c9d96c2427954dc69e7b908444b",
           "directory": "custom_nodes/ComfyUI-VideoHelperSuite",
           "install_requirements": true
         },
@@ -392,14 +392,14 @@
         {
           "name": "rgthree-comfy",
           "repository": "https://github.com/rgthree/rgthree-comfy.git",
-          "revision": "eadc24ecc8bfc3c80fcc50724c0ebe74489f255b",
+          "revision": "6b76ee6f2c5a007710b5a16f97c94330d6ecc871",
           "directory": "custom_nodes/rgthree-comfy",
           "install_requirements": true
         },
         {
           "name": "ComfyUI Easy Use",
           "repository": "https://github.com/yolain/ComfyUI-Easy-Use.git",
-          "revision": "a1b402b4a9c0ddd35c0ac1197579f8f7b121ff3e",
+          "revision": "070001b36be2bbdfcf766b6a2d6f14c36cb62906",
           "directory": "custom_nodes/ComfyUI-Easy-Use",
           "install_requirements": true
         },
@@ -482,7 +482,7 @@
         {
           "name": "ComfyUI KJNodes",
           "repository": "https://github.com/kijai/ComfyUI-KJNodes.git",
-          "revision": "8692bc8ef8beaaeee80fd52ba80477dc9e61547b",
+          "revision": "c9869eade9920a1b949de07c4a197156006bcceb",
           "directory": "custom_nodes/ComfyUI-KJNodes",
           "install_requirements": true
         },

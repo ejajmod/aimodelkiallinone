@@ -21,37 +21,60 @@ export LAUNCHER_APP_ROOT="$APP_ROOT"
 export LAUNCHER_CATALOG_PATH="${LAUNCHER_CATALOG_PATH:-$APP_ROOT/catalog/catalog.json}"
 export LAUNCHER_STATE_DIR="${LAUNCHER_STATE_DIR:-/workspace/.aimodelki-allinone}"
 export COMFYUI_ROOT="${COMFYUI_ROOT:-/workspace/runpod-slim/ComfyUI}"
-export COMFYUI_BUNDLE_VERSION="${COMFYUI_BUNDLE_VERSION:-1.4.6-cu128}"
-export COMFYUI_BUNDLE_SHA256="${COMFYUI_BUNDLE_SHA256:-15195e617e082d19e5fc07f3709d7402190cfe601afa32ab28f0aac7516108b0}"
-export COMFYUI_BUNDLE_URL="${COMFYUI_BUNDLE_URL:-https://pub-746aa51431cf4b7eac8a9cf5e44fbf58.r2.dev/runtime/aimodelki-comfyui-1.4.6-cu128.tar.gz}"
+
+BASE_START="${RUNPOD_BASE_START:-/usr/local/bin/runpod-base-start.sh}"
+LAUNCHER_PID=""
+BASE_PID=""
+
+alive() {
+  { [[ -n "$LAUNCHER_PID" ]] && kill -0 "$LAUNCHER_PID" 2>/dev/null; } \
+    || { [[ -n "$BASE_PID" ]] && kill -0 -- "-$BASE_PID" 2>/dev/null; }
+}
+
+shutdown() {
+  trap - SIGTERM SIGINT EXIT
+  [[ -n "$LAUNCHER_PID" ]] && kill -TERM "$LAUNCHER_PID" 2>/dev/null || true
+  # The stock script, JupyterLab, FileBrowser and ComfyUI share one process group. The
+  # stock script alone would not react while it sits in "sleep infinity" after a crash.
+  [[ -n "$BASE_PID" ]] && kill -TERM -- "-$BASE_PID" 2>/dev/null || true
+  # A ComfyUI started by restart-comfyui.sh runs in its own session.
+  pkill -TERM -f '[p]ython.*main.py.*--port 8188' 2>/dev/null || true
+  for _ in {1..20}; do
+    alive || break
+    sleep 0.5
+  done
+  if alive; then
+    [[ -n "$BASE_PID" ]] && kill -KILL -- "-$BASE_PID" 2>/dev/null || true
+    [[ -n "$LAUNCHER_PID" ]] && kill -KILL "$LAUNCHER_PID" 2>/dev/null || true
+  fi
+}
+trap shutdown SIGTERM SIGINT EXIT
+
+mkdir -p /workspace/runpod-slim
+
+# The stock script only recreates a missing venv, so drop one left half-built by an
+# interrupted first start.
+COMFYUI_VENV="$COMFYUI_ROOT/.venv-cu128"
+if [[ -d "$COMFYUI_VENV" && ! -x "$COMFYUI_VENV/bin/python" ]]; then
+  echo "AIMODELKI: removing an incomplete ComfyUI venv from an interrupted first start"
+  rm -rf -- "$COMFYUI_VENV"
+fi
 
 cd "$APP_ROOT"
 python3 -m uvicorn launcher.app:app --host 0.0.0.0 --port 3000 --proxy-headers --forwarded-allow-ips='*' &
 LAUNCHER_PID=$!
-
-shutdown() {
-  kill "${LAUNCHER_PID:-}" "${JUPYTER_PID:-}" "${COMFYUI_PID:-}" 2>/dev/null || true
-  # restart-comfyui.sh replaces the initial process, so also stop its successor.
-  pkill -f '[p]ython.*main.py.*--port 8188' 2>/dev/null || true
-}
-trap shutdown EXIT SIGTERM SIGINT
-
-mkdir -p /workspace/runpod-slim
 echo "AIMODELKI ALL IN ONE is listening on port 3000"
 
-jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
-  --ServerApp.token='' --ServerApp.password='' --ServerApp.allow_origin='*' \
-  --ServerApp.root_dir=/workspace > /workspace/runpod-slim/jupyter.log 2>&1 &
-JUPYTER_PID=$!
+# JupyterLab is intentionally exposed without password or token authentication.
+# RunPod or a copied template may inject JUPYTER_PASSWORD; the stock script passes it
+# to Jupyter as the token, so it is cleared here.
+export JUPYTER_PASSWORD=""
 
-if python3 "$APP_ROOT/scripts/bootstrap-comfyui.py"; then
-  cd "$COMFYUI_ROOT"
-  python3 main.py --listen 0.0.0.0 --port 8188 --enable-cors-header \
-    > /workspace/runpod-slim/comfyui.log 2>&1 &
-  COMFYUI_PID=$!
-else
-  echo "AIMODELKI: launcher and Jupyter remain available; ComfyUI bootstrap will retry after a container restart" >&2
-fi
+# Stock RunPod start: copies the baked ComfyUI into /workspace on first start, creates
+# its venv and starts SSH, FileBrowser, JupyterLab and ComfyUI. setsid makes it the
+# leader of its own process group, so shutdown can stop everything it started.
+cd /workspace/runpod-slim
+setsid "$BASE_START" &
+BASE_PID=$!
 
-# ComfyUI is restarted by the launcher after installs, so it must not end the container.
-wait -n "$LAUNCHER_PID" "$JUPYTER_PID"
+wait -n "$LAUNCHER_PID" "$BASE_PID"

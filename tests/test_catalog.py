@@ -111,6 +111,40 @@ def test_custom_node_can_request_requirements_upgrade() -> None:
     assert node.upgrade_requirements is True
 
 
+def test_node_directory_uses_one_revision_across_workflows() -> None:
+    node = {"repository": "https://github.com/example/node.git", "directory": "custom_nodes/node"}
+    raw = {
+        "version": 1,
+        "workflows": [
+            {"id": "first-pack", "custom_nodes": [{**node, "revision": "a" * 40}]},
+            {"id": "second-pack", "custom_nodes": [{**node, "revision": "b" * 40}]},
+        ],
+    }
+    with pytest.raises(CatalogError, match="different repository or revision"):
+        parse_catalog(raw)
+
+
+def test_node_archive_checksum_is_validated() -> None:
+    raw = {
+        "version": 1,
+        "workflows": [
+            {
+                "id": "node-pack",
+                "custom_nodes": [
+                    {
+                        "repository": "https://github.com/example/node.git",
+                        "revision": "a" * 40,
+                        "directory": "custom_nodes/node",
+                        "archive_sha256": "not-a-digest",
+                    }
+                ],
+            }
+        ],
+    }
+    with pytest.raises(CatalogError, match="archive_sha256"):
+        parse_catalog(raw)
+
+
 def test_production_catalog_pins_every_artifact() -> None:
     workflows = load_catalog(PROJECT_ROOT / "catalog" / "catalog.json")
 

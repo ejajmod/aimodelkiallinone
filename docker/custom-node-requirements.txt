@@ -1,0 +1,79 @@
+# Python dependencies of the custom nodes in catalog/catalog.json.
+#
+# Derived from each node's requirements.txt at the exact revision pinned in the catalog.
+# Regenerate it the same way whenever a node revision changes.
+#
+# This is a cache warm: the launcher still runs pip for every node on the Pod, which then
+# only confirms these packages. The Docker build installs this file under constraints that
+# hold the base image's torch, numpy, pillow, transformers and OpenCV builds.
+#
+# Deliberately absent (see docker/node-requirements-exclude.txt):
+#   torch, torchvision, torchaudio  provided by the base image for its CUDA build
+#   onnxruntime                     the CPU wheel overwrites onnxruntime-gpu's module
+#   git+https://github.com/facebookresearch/sam2  unpinned HEAD, not reproducible
+
+# CRT-Nodes, ComfyUI_LayerStyle (pinned to the base OpenCV version by the build)
+opencv-contrib-python
+
+# ComfyUI-Easy-Use, ComfyUI-Impact-Pack, ComfyUI-Impact-Subpack, ComfyUI-KJNodes
+opencv-python-headless
+
+# ComfyUI-VideoHelperSuite, ComfyUI-WanAnimatePreprocess, ComfyUI-WanVideoWrapper,
+# ComfyUI_Swwan, RES4LYF, comfyui-propost
+opencv-python
+
+# Shared by several nodes
+numpy
+pillow>=10.3.0
+scipy
+matplotlib
+scikit-image
+spandrel
+color-matcher
+colour-science
+transformers>=4.43.2
+huggingface_hub>=0.23.4
+dill
+
+# CRT-Nodes
+ultralytics>=8.3.162
+pedalboard
+wordcloud
+librosa
+imageio-ffmpeg
+
+# ComfyUI-Easy-Use, ComfyUI-WanVideoWrapper
+diffusers>=0.33.0
+accelerate>=1.2.1
+peft>=0.17.0
+sentencepiece>=0.2.0
+clip_interrogator>=0.6.0
+lark
+
+# ComfyUI-WanAnimatePreprocess (also satisfies the onnxruntime import of ComfyUI-Easy-Use)
+onnx
+onnxruntime-gpu
+
+# ComfyUI-Impact-Pack
+segment-anything
+piexif
+
+# ComfyUI-KJNodes
+mss
+
+# ComfyUI-WanVideoWrapper
+ftfy
+einops
+protobuf
+pyloudnorm
+gguf>=0.17.1
+
+# ComfyUI_LayerStyle
+scikit_learn
+pymatting
+timm
+blend_modes
+loguru
+
+# RES4LYF
+pywavelets

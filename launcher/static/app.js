@@ -295,9 +295,14 @@ async function boot() {
     document.querySelector("#comfyTopLink").href = serviceUrls.comfyui;
     comfyButton.href = serviceUrls.comfyui;
     renderInstant(data.instant_models);
+    if (data.runtime?.cuda) document.querySelector("#runtimeCuda").textContent = `CUDA ${data.runtime.cuda}`;
+    const gpuProblems = data.gpu?.problems || [];
     if (data.catalog_error) {
       notice.hidden = false;
       notice.textContent = `Błąd katalogu: ${data.catalog_error}`;
+    } else if (gpuProblems.length) {
+      notice.hidden = false;
+      notice.textContent = `Zgodność GPU: ${gpuProblems.join(" ")}`;
     } else if (workflows.some((workflow) => !workflow.configured)) {
       notice.hidden = false;
       const unavailable = workflows

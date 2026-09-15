@@ -189,3 +189,57 @@ def test_unknown_installer_is_rejected(monkeypatch, tmp_path) -> None:
     response = client.post("/api/install/not-a-package")
 
     assert response.status_code == 404
+
+
+def test_bootstrap_reports_cuda_runtime_and_gpu(monkeypatch, tmp_path) -> None:
+    module = load_app(monkeypatch, tmp_path)
+
+    payload = TestClient(module.app).get("/api/bootstrap").json()
+
+    assert payload["runtime"] == {"cuda": "13.0", "variant": "cu130"}
+    assert payload["gpu"]["ok"] is True
+
+
+def test_package_is_installed_only_with_its_pinned_nodes(monkeypatch, tmp_path) -> None:
+    module = load_app(monkeypatch, tmp_path)
+    module.store.update(installed_workflows=["dataset-generator"])
+    client = TestClient(module.app)
+
+    def installed() -> bool:
+        workflows = client.get("/api/bootstrap").json()["workflows"]
+        return next(item["installed"] for item in workflows if item["id"] == "dataset-generator")
+
+    assert installed() is False
+
+    workflow = next(item for item in module.workflows if item.id == "dataset-generator")
+    node = workflow.custom_nodes[0]
+    destination = tmp_path / "ComfyUI" / node.directory
+    (destination / ".git").mkdir(parents=True)
+    (destination / ".git" / "HEAD").write_text(node.revision, encoding="ascii")
+    (destination / ".aimodelki-node-revision").write_text(node.revision, encoding="ascii")
+
+    assert installed() is True
+
+
+def test_health_reports_an_incompatible_gpu(monkeypatch, tmp_path) -> None:
+    module = load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        module.gpu,
+        "query_devices",
+        lambda *args, **kwargs: [module.gpu.GpuDevice("NVIDIA GeForce RTX 4090", "570.144", (8, 9))],
+    )
+    module.gpu.reset_cache()
+    monkeypatch.setattr(
+        module.requests,
+        "get",
+        lambda *args, **kwargs: SimpleNamespace(
+            status_code=200,
+            json=lambda: {"devices": [{"type": "cuda", "name": "cuda:0"}]},
+        ),
+    )
+
+    response = TestClient(module.app).get("/api/health")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["gpu"]["ok"] is False
+    assert "580" in response.json()["checks"]["gpu"]["problems"][0]

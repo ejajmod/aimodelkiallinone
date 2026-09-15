@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import dotenv_values
 from pydantic import BaseModel
 
-from . import __version__
+from . import __version__, gpu
 from .catalog import CatalogError, WorkflowSpec, load_catalog, load_catalog_url
 from .installer import InstallError, Installer
 from .instant_models import InstantModelsError, InstantModelsManager
@@ -135,6 +135,7 @@ def health() -> JSONResponse:
         "workspace": _probe_workspace(),
         "comfyui": _probe_comfyui(),
         "jupyter": _probe_service("http://127.0.0.1:8888/api/"),
+        "gpu": gpu.status(),
         "instant_models": {
             "ok": True,
             "required": False,
@@ -187,7 +188,12 @@ def bootstrap(request: Request) -> dict[str, object]:
             "accent": workflow.accent,
             "configured": workflow.configured,
             "missing_env": workflow.missing_env,
-            "installed": workflow.id in installed or (state.get("workflow_id") == workflow.id and state.get("status") == "complete"),
+            # A stock image upgrade can reset a shared node, so the pinned revisions are rechecked.
+            "installed": (
+                workflow.id in installed
+                or (state.get("workflow_id") == workflow.id and state.get("status") == "complete")
+            )
+            and installer.workflow_nodes_ready(workflow),
             "file_count": len(workflow.downloads),
             "node_count": len(workflow.custom_nodes),
             "manual_files": manual_file_status(workflow),
@@ -203,6 +209,8 @@ def bootstrap(request: Request) -> dict[str, object]:
             "jupyter": public_service_url(8888, request),
         },
         "instant_models": instant_models.status(),
+        "runtime": {"cuda": gpu.current_runtime().cuda, "variant": gpu.current_runtime().variant},
+        "gpu": gpu.status(),
     }
 
 

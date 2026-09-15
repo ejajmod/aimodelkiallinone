@@ -1,0 +1,5 @@
+# Shell scripts and Docker build inputs run on Linux and must keep LF endings.
+*.sh text eol=lf
+*.py text eol=lf
+Dockerfile text eol=lf
+docker/** text eol=lf

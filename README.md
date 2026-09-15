@@ -12,20 +12,38 @@ Built-in installers (no Hugging Face token required):
 
 | Package | Download size |
 | --- | ---: |
-| Image Generation | 19.9 GiB |
-| Dataset Generator | 67.1 GiB |
-| Image Edit (support files and custom nodes) | 8.4 GiB |
-| Video Motion Control | 26.5 GiB |
+| Image Generation | 19.9 GB |
+| Dataset Generator | 67.1 GB |
+| Image Edit (support files and custom nodes) | 8.4 GB |
+| Video Motion Control High Quality | 61.3 GB |
+| MiniMax H3 | 63.4 GB |
 
 Image Edit requires one additional manual file: `flux-2-klein-9b.safetensors` (about 16.9 GiB). Place it at `/workspace/runpod-slim/ComfyUI/models/unet/flux-2-klein-9b.safetensors`, then restart ComfyUI. The launcher does not download this gated file or require a Hugging Face token. Instant Models may alternatively provide it when the active bundle contains the file.
 
 Workflow JSON files are not included. The template installs only models, supporting files, and custom nodes.
 
+## How the Pod starts
+
+- **ComfyUI comes from the image.** The stock RunPod start script copies the ComfyUI bundled in `runpod/comfyui` to `/workspace/runpod-slim/ComfyUI` on first start, creates its venv and starts SSH, FileBrowser, JupyterLab and ComfyUI. Nothing is downloaded to get ComfyUI running. The launcher starts next to it on port `3000`.
+- **Custom nodes are installed per package.** Choosing a package installs only the nodes it needs, each pinned to one commit. A node comes from its R2 archive when the catalog lists the archive checksum; otherwise only that commit is fetched from GitHub, without history. The Python dependencies of all catalog nodes are already in the image, so `pip` only confirms them. ComfyUI is then restarted through ComfyUI-Manager.
+- **Models download with aria2c.** Up to 4 files download at once, each over up to 16 connections. aria2c verifies the SHA-256 itself, and a verified file is never hashed again unless it changes. The built-in Python downloader remains as a fallback and finishes `.part` files that an earlier version started.
+
+## GPU and CUDA
+
+| Image tag | CUDA | NVIDIA driver | Supported GPUs |
+| --- | --- | --- | --- |
+| `1.6.0` | 13.0 | 580 or newer | Turing and newer, for example RTX 5090, RTX PRO 6000, B200, H100, RTX 4090, L40S, L4, RTX 6000 Ada, A100, A40, RTX A6000, RTX 3090, T4 |
+| `1.6.0-cu128` | 12.8 | 570 or newer | The GPUs above plus Volta (V100) |
+
+When deploying `1.6.0`, filter RunPod machines by CUDA version 13.0 so that the Pod gets a driver 580 or newer. If the driver or the GPU does not match the image, `/api/health` reports it under `checks.gpu` and the launcher shows a warning with the reason.
+
+In the `1.6.0-cu128` variant, `onnxruntime-gpu` (built for CUDA 13) falls back to the CPU, so ONNX pre-processing in Video Motion Control is slower there.
+
 ## Getting Started
 
 ### Requirements
 
-- NVIDIA GPU with enough VRAM for the selected workflow.
+- NVIDIA GPU with enough VRAM for the selected workflow and a driver that matches the image tag (see above).
 - `50 GB` Container Disk for the image and temporary runtime files.
 - `250 GB` Volume Disk mounted at `/workspace` for models and resumable downloads.
 - Image Edit with FLUX.2 Klein 9B requires approximately `29 GB` VRAM.
@@ -35,7 +53,7 @@ Workflow JSON files are not included. The template installs only models, support
 
 | RunPod setting | Value |
 | --- | --- |
-| Container image | `aimodelki/aimodelki-allin1:1.5.0` |
+| Container image | `aimodelki/aimodelki-allin1:1.6.0` |
 | Container Disk | `50 GB` |
 | Volume Disk | `250 GB` |
 | Volume Mount Path | `/workspace` |
@@ -43,15 +61,24 @@ Workflow JSON files are not included. The template installs only models, support
 | Docker Entrypoint | Leave empty |
 | Docker Start Command | Leave empty |
 
-Environment variable:
+Environment variables:
 
 ```text
 LAUNCHER_UPDATE_ENABLED=0
-INSTANT_MODELS_API_URL=https://app.aimodelki.pl/api/v1/instant-models
-INSTANT_MODELS_DISK_RESERVE_GB=5
+AIMODELKI_DOWNLOAD_PARALLEL_FILES=4
+AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE=16
 INSTANT_MODELS_DOWNLOAD_CONNECTIONS=64
 INSTANT_MODELS_DOWNLOAD_SEGMENT_MB=64
 ```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `AIMODELKI_DOWNLOAD_PARALLEL_FILES` | `4` | Files downloaded at the same time (`1`–`8`). |
+| `AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE` | `16` | aria2c connections per file (`1`–`16`). Reduce it if a route returns repeated R2 `429`/`5xx` responses. |
+| `AIMODELKI_DOWNLOADER` | `auto` | `python` forces the built-in downloader instead of aria2c. |
+| `INSTANT_MODELS_DOWNLOAD_CONNECTIONS` | `64` | Built-in downloader only: HTTP Range streams per R2 file (`1`–`64`). |
+| `INSTANT_MODELS_DOWNLOAD_SEGMENT_MB` | `64` | Built-in downloader only: resumable segment size in MiB. |
+| `AIMODELKI_NODE_ARCHIVE_BASE_URL` | public R2 `custom-nodes/` | Where pinned custom-node archives are downloaded from. |
 
 No Hugging Face token is embedded in the image or required for automatic built-in downloads. Instant Models requires an AIMODELKI token from the account page.
 
@@ -65,11 +92,40 @@ JupyterLab starts without password or token authentication and opens directly fr
 4. Select one workflow package and wait for the installation to finish. For Image Edit, add the separately required FLUX file as shown in the launcher.
 5. Open ComfyUI using the launcher button or port `8188`.
 
-For Instant Models, copy the token from the AIMODELKI account page, paste it in the launcher, and activate the connection. Then use the same four catalog buttons; with an active token they use R2 automatically, otherwise they use the public catalog URLs. Large R2 objects use 64 concurrent HTTP Range streams by default. Completed segments and resumable `.part` files are stored below `/workspace`.
-
-`INSTANT_MODELS_DOWNLOAD_CONNECTIONS` accepts `1`–`64` and defaults to `64`. Reduce it to `32`, `16` or `8` if a particular route produces repeated R2 `429`/`5xx` responses. `INSTANT_MODELS_DOWNLOAD_SEGMENT_MB` controls the resumable segment size and defaults to `64` MiB.
+For Instant Models, copy the token from the AIMODELKI account page, paste it in the launcher, and activate the connection. Then use the same catalog buttons; with an active token they use R2 automatically, otherwise they use the public catalog URLs. Completed downloads and resumable `.part` files are stored below `/workspace`.
 
 Only one package can be installed at a time. Other package cards remain locked during an active installation.
+
+## Building the images
+
+```bash
+docker build -t aimodelki/aimodelki-allin1:1.6.0 .
+
+docker build \
+  --build-arg BASE_IMAGE=runpod/comfyui:1.4.6-cuda12.8@sha256:ce5e842ca0c7233a983ff76a83739b445172259c77a43a117453ef7e6a64d0b7 \
+  --build-arg CUDA_VARIANT=cu128 \
+  -t aimodelki/aimodelki-allin1:1.6.0-cu128 .
+```
+
+`docker/custom-node-requirements.txt` lists the Python dependencies of every catalog node at its pinned revision. Regenerate it whenever a node revision in `catalog/catalog.json` changes. A node directory must use the same revision in every package, which the catalog loader enforces.
+
+### Custom-node archives on R2
+
+```bash
+python scripts/export-custom-node-archives.py dist/custom-nodes --write-catalog
+```
+
+The script builds one archive per node at its pinned commit, stores the archive SHA-256 in the catalog and prints the upload command. Upload the archives before publishing an image whose catalog references them; until then, nodes come from GitHub.
+
+## Measuring download speed
+
+Run this on the Pod (JupyterLab terminal or SSH) to see whether the network, the disk or the CPU limits downloads:
+
+```bash
+python3 /opt/workflow-launcher/scripts/bench-r2.py --instant image-generation
+```
+
+It compares curl and Python at 1, 16 and 64 streams, measures disk writes on `/workspace` and the container disk, and never prints the presigned URL. Add `--full` to download the whole file once with aria2c into each directory.
 
 ## Services
 
@@ -134,6 +190,15 @@ Model installation and the browser interfaces are available only in Pod mode.
 
 ## Version History
 
+- **1.6.0**
+  - CUDA 13.0 base image by default, with a CUDA 12.8 variant for drivers 570–579 and Volta GPUs.
+  - ComfyUI starts from the image through the stock RunPod start script instead of a runtime bundle downloaded from R2; SSH and FileBrowser are available again.
+  - Custom nodes are installed per package at one pinned commit, from R2 archives or a shallow GitHub fetch; their Python dependencies ship in the image.
+  - Model downloads use aria2c with several files at once and built-in SHA-256 verification; verified files are not hashed again.
+  - GPU driver and architecture check in `/api/health` and the launcher.
+  - Shared custom nodes use one revision across all packages.
+- **1.5.0**
+  - Added the Video Motion Control High Quality and MiniMax H3 packages.
 - **1.4.0**
   - Public ComfyUI runtime bootstrap from Cloudflare R2.
   - Persistent, verified runtime with resumable download.
