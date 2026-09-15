@@ -51,6 +51,12 @@ class ManualFileSpec:
 
 
 @dataclass(frozen=True)
+class ModelLinkSpec:
+    source: str
+    destination: str
+
+
+@dataclass(frozen=True)
 class WorkflowSpec:
     id: str
     title: str
@@ -62,6 +68,7 @@ class WorkflowSpec:
     custom_nodes: tuple[NodeSpec, ...]
     required_env: tuple[str, ...]
     manual_files: tuple[ManualFileSpec, ...] = ()
+    model_links: tuple[ModelLinkSpec, ...] = ()
 
     @property
     def missing_env(self) -> list[str]:
@@ -202,6 +209,18 @@ def parse_catalog(raw: dict[str, Any]) -> list[WorkflowSpec]:
                 )
             )
 
+        model_links: list[ModelLinkSpec] = []
+        for index, link in enumerate(item.get("model_links", [])):
+            label = f"workflows[{workflow_id}].model_links[{index}]"
+            model_links.append(
+                ModelLinkSpec(
+                    source=_safe_relative_path(str(link.get("source", "")), f"{label}.source"),
+                    destination=_safe_relative_path(
+                        str(link.get("destination", "")), f"{label}.destination"
+                    ),
+                )
+            )
+
         workflows.append(
             WorkflowSpec(
                 id=workflow_id,
@@ -214,6 +233,7 @@ def parse_catalog(raw: dict[str, Any]) -> list[WorkflowSpec]:
                 custom_nodes=tuple(nodes),
                 required_env=required_env,
                 manual_files=tuple(manual_files),
+                model_links=tuple(model_links),
             )
         )
     return workflows

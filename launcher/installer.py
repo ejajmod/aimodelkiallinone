@@ -257,6 +257,9 @@ class Installer:
                 )
                 self._install_node(node)
 
+            for link in workflow.model_links:
+                self._apply_model_link(link.source, link.destination)
+
             self._check_cancelled()
             self.store.update(status="restarting", progress=99, message="Restartuję ComfyUI…")
             self._restart_comfyui()
@@ -443,6 +446,18 @@ class Installer:
         except InstallCancelled:
             os.killpg(process.pid, signal.SIGTERM)
             raise
+
+    def _apply_model_link(self, source_relative: str, destination_relative: str) -> None:
+        source = self._target(source_relative)
+        destination = self._target(destination_relative)
+        if not source.is_file():
+            raise InstallError(f"Brak źródła dowiązania: {source_relative}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists() or destination.is_symlink():
+            if destination.resolve() == source.resolve():
+                return
+            destination.unlink()
+        destination.symlink_to(os.path.relpath(source, destination.parent))
 
     def _restart_comfyui(self) -> None:
         if not self.restart_script.exists():

@@ -2,7 +2,7 @@ services:
   aimodelki-allin1:
     build:
       context: .
-    image: aimodelki-allin1:1.4.0
+    image: aimodelki-allin1:1.5.0
     container_name: aimodelki-allin1
     ports:
       - "3000:3000"

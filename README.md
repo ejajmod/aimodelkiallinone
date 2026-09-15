@@ -35,7 +35,7 @@ Workflow JSON files are not included. The template installs only models, support
 
 | RunPod setting | Value |
 | --- | --- |
-| Container image | `aimodelki/aimodelki-allin1:1.4.0` |
+| Container image | `aimodelki/aimodelki-allin1:1.5.0` |
 | Container Disk | `50 GB` |
 | Volume Disk | `250 GB` |
 | Volume Mount Path | `/workspace` |

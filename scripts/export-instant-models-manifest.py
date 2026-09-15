@@ -10,7 +10,7 @@ def build_manifest(catalog_path: Path) -> dict[str, object]:
     bundles: list[dict[str, object]] = []
     for workflow in catalog.get("workflows", []):
         files: list[dict[str, object]] = []
-        for download in workflow.get("downloads", []):
+        for download in [*workflow.get("downloads", []), *workflow.get("manual_files", [])]:
             destination = str(download["destination"]).replace("\\", "/")
             relative = destination.removeprefix("models/")
             digest = str(download["sha256"]).lower()

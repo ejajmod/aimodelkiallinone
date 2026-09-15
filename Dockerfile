@@ -3,7 +3,7 @@ FROM runpod/comfyui:1.4.6-cuda12.8@sha256:ce5e842ca0c7233a983ff76a83739b44517225
 
 LABEL org.opencontainers.image.title="AIMODELKI ALL IN ONE" \
       org.opencontainers.image.description="ComfyUI, JupyterLab, workflow installers and Instant Models for RunPod" \
-      org.opencontainers.image.version="1.4.0"
+      org.opencontainers.image.version="1.5.0"
 
 USER root
 WORKDIR /opt/workflow-launcher

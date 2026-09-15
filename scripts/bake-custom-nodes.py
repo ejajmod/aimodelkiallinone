@@ -31,7 +31,8 @@ def bake(catalog_path: Path, comfyui_root: Path) -> None:
             seen[key] = revision
             destination = comfyui_root / relative
             if destination.exists():
-                raise RuntimeError(f"Custom node already exists in base image: {destination}")
+                print(f"{key}: already present in the RunPod base image; pinned on demand", flush=True)
+                continue
 
             run("git", "clone", "--filter=blob:none", node["repository"], str(destination))
             run("git", "fetch", "--depth", "1", "origin", revision, cwd=destination)

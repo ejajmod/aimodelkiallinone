@@ -25,7 +25,7 @@ def test_bootstrap_returns_catalog_and_local_service_urls(monkeypatch, tmp_path)
 
     assert response.status_code == 200
     payload = response.json()
-    assert len(payload["workflows"]) == 4
+    assert len(payload["workflows"]) == 5
     assert payload["services"]["comfyui"] == "http://testserver:8188"
     assert payload["services"]["jupyter"] == "http://testserver:8888"
     assert payload["instant_models"]["connected"] is False
@@ -42,9 +42,12 @@ def test_bootstrap_returns_catalog_and_local_service_urls(monkeypatch, tmp_path)
     assert workflows["image-edit"]["node_count"] == 3
     assert workflows["image-edit"]["manual_files"][0]["destination"] == "models/unet/flux-2-klein-9b.safetensors"
     assert workflows["image-edit"]["manual_files"][0]["detected"] is False
-    assert workflows["motion-control"]["configured"] is True
-    assert workflows["motion-control"]["file_count"] == 6
-    assert workflows["motion-control"]["node_count"] == 5
+    assert workflows["motion-control-high-quality"]["configured"] is True
+    assert workflows["motion-control-high-quality"]["file_count"] == 14
+    assert workflows["motion-control-high-quality"]["node_count"] == 13
+    assert workflows["minimax-h3"]["configured"] is True
+    assert workflows["minimax-h3"]["file_count"] == 5
+    assert workflows["minimax-h3"]["node_count"] == 3
     page = client.get("/")
     assert page.status_code == 200
     assert "<b>AIMODELKI</b> ALL IN ONE" in page.text

@@ -1,6 +1,6 @@
 {
   "name": "AIMODELKI ALL IN ONE",
-  "imageName": "aimodelki/aimodelki-allin1:1.4.0",
+  "imageName": "aimodelki/aimodelki-allin1:1.5.0",
   "category": "NVIDIA",
   "containerDiskInGb": 50,
   "volumeInGb": 250,

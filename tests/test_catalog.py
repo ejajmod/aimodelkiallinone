@@ -118,7 +118,8 @@ def test_production_catalog_pins_every_artifact() -> None:
         "image-generation",
         "dataset-generator",
         "image-edit",
-        "motion-control",
+        "motion-control-high-quality",
+        "minimax-h3",
     }
     for workflow in workflows:
         for download in workflow.downloads:
