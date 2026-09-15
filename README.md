@@ -27,7 +27,7 @@ Workflow JSON files are not included. The template installs only models, support
 - **ComfyUI comes from the image.** The stock RunPod start script copies the ComfyUI bundled in `runpod/comfyui` to `/workspace/runpod-slim/ComfyUI` on first start, creates its venv and starts SSH, FileBrowser, JupyterLab and ComfyUI. Nothing is downloaded to get ComfyUI running. The launcher starts next to it on port `3000`.
 - **Custom nodes are installed per package.** Choosing a package installs only the nodes it needs, each pinned to one commit. A node comes from its R2 archive when the catalog lists the archive checksum; otherwise only that commit is fetched from GitHub, without history. The Python dependencies of all catalog nodes are already in the image, so `pip` only confirms them. ComfyUI is then restarted through ComfyUI-Manager.
 - **Standard Download is a plain download.** Without an Instant Models token, each file comes over one ordinary HTTP request, one file after another, so public hosts such as Hugging Face see normal traffic. An interrupted file resumes with one request from where it stopped.
-- **Instant Download is built for speed.** With an active token, large R2 files download with `rangefetch`, a small native downloader built from `tools/rangefetch`: 128 keep-alive range connections per file across every CPU core, each segment written straight to its place in the file, and up to 4 files at once. Small files use aria2c, and the built-in Python downloader remains as a fallback.
+- **Instant Download is built for speed.** With an active token, large R2 files download with `rangefetch`, a small native downloader built from `tools/rangefetch`: 64 keep-alive range connections per file across every CPU core, each segment written straight to its place in the file, and up to 4 files at once. Small files use aria2c, and the built-in Python downloader remains as a fallback.
 - Every file is checked against its SHA-256, and a verified file is never hashed again unless it changes.
 - **The image shares its base with `runpod/comfyui:latest`**, the image behind RunPod's own ComfyUI template. A host that already ran that template only pulls this image's own layers (about 0.6 GB).
 
@@ -35,8 +35,8 @@ Workflow JSON files are not included. The template installs only models, support
 
 | Image tag | CUDA | NVIDIA driver | Supported GPUs |
 | --- | --- | --- | --- |
-| `1.6.2` | 12.8 | 570 or newer | Volta and newer, for example RTX 5090, RTX PRO 6000, B200, H100, RTX 4090, L40S, L4, RTX 6000 Ada, A100, A40, RTX A6000, RTX 3090, T4, V100 |
-| `1.6.2-cu130` | 13.0 | 580 or newer | Turing and newer (no V100) |
+| `1.6.3` | 12.8 | 570 or newer | Volta and newer, for example RTX 5090, RTX PRO 6000, B200, H100, RTX 4090, L40S, L4, RTX 6000 Ada, A100, A40, RTX A6000, RTX 3090, T4, V100 |
+| `1.6.3-cu130` | 13.0 | 580 or newer | Turing and newer (no V100) |
 
 If the driver or the GPU does not match the image, `/api/health` reports it under `checks.gpu` and the launcher shows a warning with the reason.
 
@@ -54,7 +54,7 @@ If the driver or the GPU does not match the image, `/api/health` reports it unde
 
 | RunPod setting | Value |
 | --- | --- |
-| Container image | `aimodelki/aimodelki-allin1:1.6.2` |
+| Container image | `aimodelki/aimodelki-allin1:1.6.3` |
 | Container Disk | `50 GB` |
 | Volume Disk | `250 GB` |
 | Volume Mount Path | `/workspace` |
@@ -67,14 +67,14 @@ Environment variables:
 ```text
 LAUNCHER_UPDATE_ENABLED=0
 AIMODELKI_DOWNLOAD_PARALLEL_FILES=4
-INSTANT_MODELS_DOWNLOAD_CONNECTIONS=128
+INSTANT_MODELS_DOWNLOAD_CONNECTIONS=64
 INSTANT_MODELS_DOWNLOAD_SEGMENT_MB=16
 ```
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `AIMODELKI_DOWNLOAD_PARALLEL_FILES` | `4` | Instant Download: files downloaded at the same time (`1`–`8`). Standard Download always fetches one file at a time. |
-| `INSTANT_MODELS_DOWNLOAD_CONNECTIONS` | `128` | Instant Download: connections per R2 file (`1`–`256`). Raise it when a Pod has bandwidth and CPU to spare; reduce it if R2 returns repeated `429`/`5xx` responses. |
+| `INSTANT_MODELS_DOWNLOAD_CONNECTIONS` | `64` | Instant Download: connections per R2 file (`1`–`256`). Raise it when a Pod has bandwidth and CPU to spare; reduce it if R2 returns repeated `429`/`5xx` responses. |
 | `INSTANT_MODELS_DOWNLOAD_SEGMENT_MB` | `16` | Resumable segment size in MiB. A file uses at most one connection per segment, so smaller segments let smaller files use every connection. |
 | `AIMODELKI_DOWNLOADER` | `auto` | Instant Download: `aria2` skips rangefetch; `python` forces the built-in downloader. |
 | `AIMODELKI_NODE_ARCHIVE_BASE_URL` | public R2 `custom-nodes/` | Where pinned custom-node archives are downloaded from. |
@@ -98,12 +98,12 @@ Only one package can be installed at a time. Other package cards remain locked d
 ## Building the images
 
 ```bash
-docker build -t aimodelki/aimodelki-allin1:1.6.2 .
+docker build -t aimodelki/aimodelki-allin1:1.6.3 .
 
 docker build \
   --build-arg BASE_IMAGE=runpod/comfyui:1.4.7-cuda13.0@sha256:094dc6d79448b6f118c4d2b054073f92d765c568598e7a96aaeda678a6bcbf3b \
   --build-arg CUDA_VARIANT=cu130 \
-  -t aimodelki/aimodelki-allin1:1.6.2-cu130 .
+  -t aimodelki/aimodelki-allin1:1.6.3-cu130 .
 ```
 
 `docker/custom-node-requirements.txt` lists the Python dependencies of every catalog node at its pinned revision. Regenerate it whenever a node revision in `catalog/catalog.json` changes. A node directory must use the same revision in every package, which the catalog loader enforces.
@@ -189,6 +189,8 @@ Model installation and the browser interfaces are available only in Pod mode.
 
 ## Version History
 
+- **1.6.3**
+  - Instant Download uses 64 connections per R2 file by default instead of 128; `INSTANT_MODELS_DOWNLOAD_CONNECTIONS` still accepts up to 256.
 - **1.6.2**
   - Standard Download (without an Instant Models token) uses one plain request per file and downloads one file at a time; parallel connections and parallel files are reserved for Instant Download.
   - Instant Models API errors name the HTTP status and the server's message, and temporary `502`/`503`/`504` responses or dropped connections are retried.

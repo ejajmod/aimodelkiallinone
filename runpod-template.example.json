@@ -1,6 +1,6 @@
 {
   "name": "AIMODELKI ALL IN ONE",
-  "imageName": "aimodelki/aimodelki-allin1:1.6.2",
+  "imageName": "aimodelki/aimodelki-allin1:1.6.3",
   "category": "NVIDIA",
   "containerDiskInGb": 50,
   "volumeInGb": 250,
@@ -15,10 +15,10 @@
   "env": {
     "LAUNCHER_UPDATE_ENABLED": "0",
     "AIMODELKI_DOWNLOAD_PARALLEL_FILES": "4",
-    "INSTANT_MODELS_DOWNLOAD_CONNECTIONS": "128",
+    "INSTANT_MODELS_DOWNLOAD_CONNECTIONS": "64",
     "INSTANT_MODELS_DOWNLOAD_SEGMENT_MB": "16"
   },
   "isPublic": false,
   "isServerless": false,
-  "readme": "# AIMODELKI ALL IN ONE\n\nOpen port 3000 for the installer, 8188 for ComfyUI and 8888 for JupyterLab. The image runs CUDA 12.8 and needs an NVIDIA driver 570 or newer (RTX 5090, RTX 4090, A100, H100, L40S, V100 and more); the 1.6.2-cu130 tag needs driver 580 or newer. Models and custom nodes are stored under /workspace. No external workflow JSON files are bundled."
+  "readme": "# AIMODELKI ALL IN ONE\n\nOpen port 3000 for the installer, 8188 for ComfyUI and 8888 for JupyterLab. The image runs CUDA 12.8 and needs an NVIDIA driver 570 or newer (RTX 5090, RTX 4090, A100, H100, L40S, V100 and more); the 1.6.3-cu130 tag needs driver 580 or newer. Models and custom nodes are stored under /workspace. No external workflow JSON files are bundled."
 }

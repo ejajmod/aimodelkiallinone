@@ -21,7 +21,7 @@ def test_image_version_matches_launcher_and_template() -> None:
     assert template["volumeInGb"] == 250
     assert template["volumeMountPath"] == "/workspace"
     assert template["env"]["AIMODELKI_DOWNLOAD_PARALLEL_FILES"] == "4"
-    assert template["env"]["INSTANT_MODELS_DOWNLOAD_CONNECTIONS"] == "128"
+    assert template["env"]["INSTANT_MODELS_DOWNLOAD_CONNECTIONS"] == "64"
     # Standard Download has no connection setting: it always uses one request per file.
     assert "AIMODELKI_DOWNLOAD_CONNECTIONS_PER_FILE" not in template["env"]
     assert not any(key.startswith("COMFYUI_BUNDLE") for key in template["env"])

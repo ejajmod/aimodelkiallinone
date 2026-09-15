@@ -23,7 +23,7 @@ ARG CUDA_VARIANT=cu128
 
 LABEL org.opencontainers.image.title="AIMODELKI ALL IN ONE" \
       org.opencontainers.image.description="ComfyUI, JupyterLab, workflow installers and Instant Models for RunPod" \
-      org.opencontainers.image.version="1.6.2"
+      org.opencontainers.image.version="1.6.3"
 
 USER root
 
@@ -73,7 +73,7 @@ ENV PYTHONUNBUFFERED=1 \
     INSTANT_MODELS_STATE_DIR=/workspace/.instant-models \
     INSTANT_MODELS_API_URL=https://app.aimodelki.pl/api/v1/instant-models \
     INSTANT_MODELS_DOWNLOAD_HOSTS=.r2.cloudflarestorage.com \
-    INSTANT_MODELS_DOWNLOAD_CONNECTIONS=128 \
+    INSTANT_MODELS_DOWNLOAD_CONNECTIONS=64 \
     INSTANT_MODELS_DOWNLOAD_SEGMENT_MB=16 \
     INSTANT_MODELS_DISK_RESERVE_GB=5 \
     AIMODELKI_DOWNLOAD_PARALLEL_FILES=4

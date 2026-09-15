@@ -85,8 +85,8 @@ class Installer:
         # Small segments let even a 1 GB file use every connection.
         segment_mb = self._env_int("INSTANT_MODELS_DOWNLOAD_SEGMENT_MB", 16, 4, 1024)
         segment_size = segment_mb * 1024 * 1024
-        # R2 throughput grows with connections; 128 keeps 500 MiB/s even at ~4 MiB/s per connection.
-        connections = self._env_int("INSTANT_MODELS_DOWNLOAD_CONNECTIONS", 128, 1, 256)
+        # Connections per R2 file; raise it with INSTANT_MODELS_DOWNLOAD_CONNECTIONS (up to 256).
+        connections = self._env_int("INSTANT_MODELS_DOWNLOAD_CONNECTIONS", 64, 1, 256)
         self.instant_download_engine = DownloadEngine(
             self.comfyui_root,
             parallelism=connections,

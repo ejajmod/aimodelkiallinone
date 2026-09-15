@@ -85,7 +85,8 @@ def test_standard_download_uses_one_request_per_file(tmp_path, monkeypatch) -> N
 
     instant = installer.instant_download_engine
     assert instant.rangefetch == "/usr/local/bin/rangefetch"
-    assert installer._connection_count(instant=True) == 4 * 128
+    assert instant.rangefetch_connections == 64
+    assert installer._connection_count(instant=True) == 4 * 64
 
 
 def test_single_stream_restarts_a_segmented_partial_file(tmp_path, monkeypatch) -> None:

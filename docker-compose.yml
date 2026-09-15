@@ -2,7 +2,7 @@ services:
   aimodelki-allin1:
     build:
       context: .
-    image: aimodelki-allin1:1.6.2
+    image: aimodelki-allin1:1.6.3
     container_name: aimodelki-allin1
     ports:
       - "3000:3000"
@@ -20,7 +20,7 @@ services:
       INSTANT_MODELS_STATE_DIR: "${INSTANT_MODELS_STATE_DIR:-/workspace/.instant-models}"
       INSTANT_MODELS_API_URL: "${INSTANT_MODELS_API_URL:-https://app.aimodelki.pl/api/v1/instant-models}"
       INSTANT_MODELS_DOWNLOAD_HOSTS: "${INSTANT_MODELS_DOWNLOAD_HOSTS:-.r2.cloudflarestorage.com}"
-      INSTANT_MODELS_DOWNLOAD_CONNECTIONS: "${INSTANT_MODELS_DOWNLOAD_CONNECTIONS:-128}"
+      INSTANT_MODELS_DOWNLOAD_CONNECTIONS: "${INSTANT_MODELS_DOWNLOAD_CONNECTIONS:-64}"
       INSTANT_MODELS_DOWNLOAD_SEGMENT_MB: "${INSTANT_MODELS_DOWNLOAD_SEGMENT_MB:-16}"
       INSTANT_MODELS_DISK_RESERVE_GB: "${INSTANT_MODELS_DISK_RESERVE_GB:-5}"
       AIMODELKI_DOWNLOADER: "${AIMODELKI_DOWNLOADER:-auto}"
