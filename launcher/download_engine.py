@@ -280,6 +280,13 @@ class DownloadEngine:
             lines.append(f"{prefix}{key}: {value}")
         return lines
 
+    def rangefetch_segment_mb(self, item: DownloadRequest) -> int:
+        """Split the file evenly across the connections, so each one streams a single long
+        range request, never below the configured segment size."""
+        size = int(item.size_bytes or 0)
+        per_connection = -(-size // self.rangefetch_connections)
+        return max(1, self.segment_size // MIB, -(-per_connection // MIB))
+
     def rangefetch_invocation(self, item: DownloadRequest, part: Path, url: str) -> tuple[list[str], str]:
         """Build the rangefetch command line and its stdin (URL and headers, never argv)."""
         if not self.rangefetch:
@@ -292,9 +299,8 @@ class DownloadEngine:
             str(int(item.size_bytes or 0)),
             "-connections",
             str(self.rangefetch_connections),
-            # Same segment layout as the Python engine, so each can resume the other.
             "-segment-mb",
-            str(max(1, self.segment_size // MIB)),
+            str(self.rangefetch_segment_mb(item)),
         ]
         return command, "\n".join([url, *self._header_lines(item, "")]) + "\n"
 

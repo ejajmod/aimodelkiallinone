@@ -120,7 +120,9 @@ def rangefetch_run(url: str, directory: Path, total: int, connections: int) -> t
     before = os.times()
     started = time.monotonic()
     process = subprocess.run(
-        [binary, "-out", str(output), "-size", str(total), "-connections", str(connections), "-segment-mb", "16"],
+        # One long range request per connection, as Instant Download uses it.
+        [binary, "-out", str(output), "-size", str(total), "-connections", str(connections),
+         "-segment-mb", str(max(64, -(-total // connections // MIB)))],
         input=url + "\n",
         text=True,
         capture_output=True,
@@ -208,7 +210,7 @@ def main() -> None:
     targets = [Path("/dev/shm")] if Path("/dev/shm").is_dir() else []
     targets += [directory for directory in args.dirs if directory.exists()][:1]
     for directory in targets:
-        for connections in (32, 64, 128):
+        for connections in (16, 32, 48, 64):
             result = rangefetch_run(url, directory, total, connections)
             if result is not None:
                 print(f"  {str(directory):12s} {connections:>3} connections: {result[0]:8.0f} MiB/s   CPU {result[1]:4.1f} cores")
@@ -228,7 +230,7 @@ def main() -> None:
 
     print(
         "\nReading: rangefetch into /dev/shm shows the network ceiling; if /workspace is much slower, "
-        "the disk is the bottleneck. If rangefetch stops scaling from 64 to 128 connections while "
+        "the disk is the bottleneck. If rangefetch stops scaling from 32 to 64 connections while "
         "using few cores, the route or R2 limits the download."
     )
 

@@ -383,34 +383,39 @@ func (j *job) reportProgress(stop <-chan struct{}, done chan<- struct{}) {
 }
 
 func (j *job) fetchWithRetry(ctx context.Context, index int, buffer []byte) error {
-	var last error
-	for attempt := range attempts {
-		if attempt > 0 {
-			delay := j.retryBase << min(attempt-1, 4)
-			select {
-			case <-time.After(delay):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		written, err := j.fetch(ctx, index, buffer)
+	// Bytes already written stay valid, so an interrupted segment continues from where it
+	// stopped instead of starting over - segments can be hundreds of megabytes long.
+	var done int64
+	failures := 0
+	for {
+		written, err := j.fetch(ctx, index, done, buffer)
+		done += written
 		if err == nil {
 			return nil
 		}
-		// Bytes of a failed attempt are written again by the next one.
-		j.transferred.Add(-written)
 		var fatal *fatalError
 		if errors.As(err, &fatal) || ctx.Err() != nil {
 			return err
 		}
-		last = err
+		// Only consecutive attempts without progress count toward giving up.
+		if written > 0 {
+			failures = 0
+		}
+		failures++
+		if failures >= attempts {
+			return err
+		}
+		select {
+		case <-time.After(j.retryBase << min(failures-1, 4)):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	return last
 }
 
-func (j *job) fetch(ctx context.Context, index int, buffer []byte) (int64, error) {
-	start := int64(index) * j.segment
-	end := min(start+j.segment, j.size) - 1
+func (j *job) fetch(ctx context.Context, index int, offset int64, buffer []byte) (int64, error) {
+	start := int64(index)*j.segment + offset
+	end := min(int64(index)*j.segment+j.segment, j.size) - 1
 
 	requestCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -453,15 +458,15 @@ func (j *job) fetch(ctx context.Context, index int, buffer []byte) (int64, error
 	// TLS delivers about 16 KiB per read. Filling the whole buffer before each write keeps
 	// the pwrite calls, and the contention of many writers on one file, low.
 	body := stallReader{reader: response.Body, timer: stall}
-	offset := start
+	position := start
 	var written int64
-	for offset <= end {
-		count, readErr := io.ReadFull(body, buffer[:min(int64(len(buffer)), end+1-offset)])
+	for position <= end {
+		count, readErr := io.ReadFull(body, buffer[:min(int64(len(buffer)), end+1-position)])
 		if count > 0 {
-			if _, err := j.file.WriteAt(buffer[:count], offset); err != nil {
+			if _, err := j.file.WriteAt(buffer[:count], position); err != nil {
 				return written, &fatalError{exitFailed, "write: " + err.Error()}
 			}
-			offset += int64(count)
+			position += int64(count)
 			written += int64(count)
 			j.transferred.Add(int64(count))
 		}
@@ -472,8 +477,8 @@ func (j *job) fetch(ctx context.Context, index int, buffer []byte) (int64, error
 			return written, readErr
 		}
 	}
-	if offset != end+1 {
-		return written, fmt.Errorf("segment %d ended after %d of %d bytes", index, offset-start, end-start+1)
+	if position != end+1 {
+		return written, fmt.Errorf("segment %d ended after %d of %d bytes", index, position-start, end-start+1)
 	}
 	return written, nil
 }

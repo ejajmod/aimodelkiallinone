@@ -76,17 +76,18 @@ class Installer:
         # download. It stays gentle on public hosts such as Hugging Face.
         self.download_engine = DownloadEngine(self.comfyui_root)
 
-        # Instant Download: one file at a time, each over aria2c's 16 long-running range
-        # connections, as the fastest RunPod launchers do. rangefetch (many short range
-        # requests) is opt-in with AIMODELKI_DOWNLOADER=rangefetch; Python is the fallback.
+        # Instant Download: one file at a time. Large files use rangefetch, which splits a file
+        # evenly across its connections so each one streams a single long range request;
+        # aria2c (at most 16 connections) takes small files and everything with
+        # AIMODELKI_DOWNLOADER=aria2. Python is the fallback.
         downloader = os.getenv("AIMODELKI_DOWNLOADER", "auto").strip().lower()
-        rangefetch = shutil.which("rangefetch") if downloader == "rangefetch" else None
+        rangefetch = shutil.which("rangefetch") if downloader in {"auto", "rangefetch"} else None
         aria2c = shutil.which("aria2c") if downloader in {"auto", "aria2", "rangefetch"} else None
         self.parallel_files = self._env_int("AIMODELKI_DOWNLOAD_PARALLEL_FILES", 1, 1, 8)
-        # Segment size and connection count apply to rangefetch and the Python fallback.
+        # The smallest part a file is split into; also the Python fallback's segment size.
         segment_mb = self._env_int("INSTANT_MODELS_DOWNLOAD_SEGMENT_MB", 64, 4, 1024)
         segment_size = segment_mb * 1024 * 1024
-        connections = self._env_int("INSTANT_MODELS_DOWNLOAD_CONNECTIONS", 64, 1, 256)
+        connections = self._env_int("INSTANT_MODELS_DOWNLOAD_CONNECTIONS", 48, 1, 256)
         self.instant_download_engine = DownloadEngine(
             self.comfyui_root,
             parallelism=connections,

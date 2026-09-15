@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -151,6 +153,45 @@ func TestKeepsTheSegmentLayoutOfAnEarlierRun(t *testing.T) {
 	}
 }
 
+func TestInterruptedSegmentContinuesFromWhereItStopped(t *testing.T) {
+	data := payload(t, 2<<20)
+	var mu sync.Mutex
+	var ranges []string
+	var cut atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		ranges = append(ranges, r.Header.Get("Range"))
+		mu.Unlock()
+		if cut.CompareAndSwap(false, true) {
+			// Promise the whole range, deliver half of it, then drop the connection.
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(data)-1, len(data)))
+			w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write(data[:1<<20])
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			panic(http.ErrAbortHandler)
+		}
+		http.ServeContent(w, r, "model.bin", time.Time{}, bytes.NewReader(data))
+	}))
+	defer server.Close()
+	// One segment covering the whole file, as with one long request per connection.
+	j := testJob(t, server.URL, int64(len(data)), int64(len(data)), 1)
+
+	if code := j.run(context.Background()); code != exitOK {
+		t.Fatalf("exit %d", code)
+	}
+
+	written, _ := os.ReadFile(j.out)
+	if !bytes.Equal(written, data) {
+		t.Fatal("resumed file differs from the source")
+	}
+	if strings.Join(ranges, ",") != "bytes=0-2097151,bytes=1048576-2097151" {
+		t.Fatalf("unexpected ranges %v", ranges)
+	}
+}
+
 func TestServerErrorsAreRetried(t *testing.T) {
 	data := payload(t, 1<<20)
 	var failures atomic.Int32
@@ -207,7 +248,7 @@ func TestInputCarriesURLAndHeaders(t *testing.T) {
 
 func TestTransportErrorsDoNotRevealTheURL(t *testing.T) {
 	j := testJob(t, "http://127.0.0.1:1/model.bin?X-Amz-Signature=secret", 1<<20, 1<<20, 1)
-	_, err := j.fetch(context.Background(), 0, make([]byte, 1024))
+	_, err := j.fetch(context.Background(), 0, 0, make([]byte, 1024))
 	if err == nil || strings.Contains(describe(err), "secret") {
 		t.Fatalf("unexpected error text %q", describe(err))
 	}
