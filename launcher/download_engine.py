@@ -8,9 +8,10 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Mapping
+from urllib.parse import urlsplit
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -166,6 +167,15 @@ class DownloadEngine:
             metadata.unlink(missing_ok=True)
             control.unlink(missing_ok=True)
 
+        hosts: list[str] = []
+
+        def provide_url() -> str:
+            url = item.url_provider()
+            hosts.append((urlsplit(url).hostname or "unknown").lower())
+            return url
+
+        request = replace(item, url_provider=provide_url)
+        started = time.monotonic()
         last_error: Exception | None = None
         for attempt in range(self.attempts):
             if cancelled():
@@ -173,22 +183,26 @@ class DownloadEngine:
             try:
                 verified = False
                 if self._use_rangefetch(item, part):
-                    self._transfer_rangefetch(item, part, cancelled, progress)
+                    engine = f"rangefetch x{self.rangefetch_connections}"
+                    self._transfer_rangefetch(request, part, cancelled, progress)
                 elif self._use_aria2(item, part):
-                    verified = self._transfer_aria2(item, part, cancelled, progress)
+                    engine = f"aria2c x{self.aria2_connections}"
+                    verified = self._transfer_aria2(request, part, cancelled, progress)
                 elif (
                     self.parallelism > 1
                     and item.size_bytes
                     and item.size_bytes >= self.parallel_threshold
                 ):
-                    self._transfer_parallel(item, part, cancelled, progress)
+                    engine = f"python x{self.parallelism}"
+                    self._transfer_parallel(request, part, cancelled, progress)
                 else:
+                    engine = "single request"
                     if metadata.exists() or control.exists():
                         # A segmented .part has holes, so one stream cannot continue it.
                         part.unlink(missing_ok=True)
                         control.unlink(missing_ok=True)
                     metadata.unlink(missing_ok=True)
-                    self._transfer(item, part, cancelled, progress)
+                    self._transfer(request, part, cancelled, progress)
                 if item.size_bytes and part.stat().st_size != item.size_bytes:
                     raise DownloadError(
                         f"Niepełny plik {item.name}: {part.stat().st_size} z {item.size_bytes} bajtów"
@@ -203,7 +217,9 @@ class DownloadEngine:
                 control.unlink(missing_ok=True)
                 if item.sha256:
                     self._write_verified_marker(target, item.sha256)
-                return target.stat().st_size
+                size = target.stat().st_size
+                self._log_file(item.name, hosts[-1] if hosts else "unknown", engine, size, time.monotonic() - started)
+                return size
             except DownloadCancelled:
                 raise
             except (requests.RequestException, OSError, DownloadError) as exc:
@@ -221,6 +237,15 @@ class DownloadEngine:
         else:
             reason = redact_urls(str(last_error))
         raise DownloadError(f"Nie udało się pobrać {item.name}: {reason}")
+
+    @staticmethod
+    def _log_file(name: str, host: str, engine: str, size: int, seconds: float) -> None:
+        """One line per file in the Pod log: source host and speed, never the URL itself."""
+        print(
+            f"AIMODELKI download: {name} [{host}] {engine}: {size / MIB:.0f} MiB in {seconds:.1f}s "
+            f"({size / MIB / max(seconds, 0.001):.0f} MiB/s including verification)",
+            flush=True,
+        )
 
     @staticmethod
     def _metadata_path(part: Path) -> Path:

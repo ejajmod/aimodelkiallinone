@@ -83,10 +83,22 @@ def test_standard_download_uses_one_request_per_file(tmp_path, monkeypatch) -> N
     assert standard.parallelism == 1
     assert installer._connection_count(instant=False) == 1
 
+    # Instant Download follows the aria2c model: one file at a time, 16 connections.
     instant = installer.instant_download_engine
-    assert instant.rangefetch == "/usr/local/bin/rangefetch"
-    assert instant.rangefetch_connections == 64
-    assert installer._connection_count(instant=True) == 4 * 64
+    assert instant.rangefetch is None
+    assert instant.aria2c == "/usr/local/bin/aria2c"
+    assert installer.parallel_files == 1
+    assert installer._connection_count(instant=True) == 16
+
+
+def test_rangefetch_is_opt_in_for_instant_download(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AIMODELKI_DOWNLOADER", "rangefetch")
+    monkeypatch.setattr("launcher.installer.shutil.which", lambda name: f"/usr/local/bin/{name}")
+    installer = make_installer(tmp_path)
+
+    assert installer.instant_download_engine.rangefetch == "/usr/local/bin/rangefetch"
+    assert installer.instant_download_engine.rangefetch_connections == 64
+    assert installer.download_engine.rangefetch is None
 
 
 def test_single_stream_restarts_a_segmented_partial_file(tmp_path, monkeypatch) -> None:

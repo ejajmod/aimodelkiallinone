@@ -90,6 +90,18 @@ class FakeAria2:
         return self.returncode
 
 
+def test_each_file_logs_its_host_and_speed_but_never_the_url(tmp_path, monkeypatch, capsys) -> None:
+    payload = b"model-weights" * 1000
+    monkeypatch.setattr(download_engine.subprocess, "Popen", FakeAria2(payload, 0))
+    engine = DownloadEngine(tmp_path, attempts=1, aria2c="aria2c")
+
+    engine.download(request_for(payload), cancelled=lambda: False, progress=lambda *_args: None)
+
+    output = capsys.readouterr().out
+    assert "AIMODELKI download: Model [bucket.r2.cloudflarestorage.com] aria2c x16:" in output
+    assert "do-not-log-me" not in output
+
+
 def test_aria2_download_is_trusted_without_a_second_hash(tmp_path, monkeypatch) -> None:
     payload = b"model-weights" * 1000
     fake = FakeAria2(payload, 0)
